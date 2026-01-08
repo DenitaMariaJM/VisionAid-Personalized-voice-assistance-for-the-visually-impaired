@@ -2,3 +2,9 @@ captured_images/
 tts_audio/
 
 assistant_db
+
+# environment files
+venv/
+
+# pycache
+__pycache__/
