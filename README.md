@@ -1,7 +1,7 @@
-"# VisionAid-Personalized-voice-assistance-for-the-visually-impaired" 
+
 # VisionAid – Personalized Voice Assistance for the Visually Impaired
 
-## 📌 Project Description
+## Project Description
 
 **VisionAid** is a personalized, voice-enabled assistive system designed to help **visually impaired users** understand and navigate their surroundings safely.  
 The system uses **voice interaction, camera-based scene understanding, AI reasoning, and contextual memory** to provide **short, actionable, and accessibility-focused guidance**.
@@ -14,7 +14,7 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ---
 
-## 🎯 Project Objectives
+##  Project Objectives
 
 - Help visually impaired users understand **what is in front of them**
 - Provide **clear movement guidance** (front / left / right)
@@ -24,7 +24,7 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ---
 
-## ⚙️ How the System Works
+##  How the System Works
 
 1. The system listens for a **wake word** (e.g., *Alexa*).
 2. The user speaks a query.
@@ -38,32 +38,32 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
-### 🗣 Voice Interaction
+###  Voice Interaction
 - Wake-word activation
 - Speech-to-text using Google Speech Recognition
 - Text-to-speech using Google TTS
 
-### 📷 Vision-Based Assistance
+###  Vision-Based Assistance
 - Real-time camera image capture
 - Multimodal AI (text + image)
 - Focus on obstacles and navigation
 
-### 🧭 Accessibility-Focused Responses
+###  Accessibility-Focused Responses
 - Short, clear, and action-oriented
 - Direction-aware (front / left / right)
 - Safety-first language
 
-### 🧠 Contextual Memory
+###  Contextual Memory
 - Semantic memory using embeddings
 - Supports follow-up queries (e.g., “And on the left?”)
 
-### 💾 Data Storage
+###  Data Storage
 - SQLite database for storing interactions
 - Stores query, response, image reference, and timestamp
 
 ---
 
-## 🗂 Project Structure
+
 
