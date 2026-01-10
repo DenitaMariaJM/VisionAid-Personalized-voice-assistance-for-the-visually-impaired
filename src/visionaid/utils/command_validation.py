@@ -1,3 +1,5 @@
+"""Heuristics for validating user commands."""
+
 import string
 
 def is_confident_command(text):

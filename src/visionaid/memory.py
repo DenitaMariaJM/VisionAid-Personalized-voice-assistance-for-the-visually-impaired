@@ -1,6 +1,15 @@
+"""In-memory semantic memory backed by FAISS embeddings."""
+
+import sqlite3
+import threading
+import logging
+
 import faiss               # Library for fast vector similarity search
 import numpy as np         # Numerical operations for embeddings
 from openai import OpenAI  # OpenAI client for generating embeddings
+
+from .config import MEMORY_PERSIST, MEMORY_SNIPPET_CHARS, MEMORY_STORE_ASSISTANT
+from .db import DB_NAME
 
 
 # ==============================
@@ -9,6 +18,7 @@ from openai import OpenAI  # OpenAI client for generating embeddings
 
 # Initialize OpenAI client
 client = OpenAI()
+logger = logging.getLogger(__name__)
 
 # Dimensionality of the embedding vector
 # Must match the embedding model used
@@ -21,11 +31,19 @@ index = faiss.IndexFlatL2(DIM)
 # List to store the original text corresponding to each embedding
 # The index position matches the FAISS vector index
 texts = []
+_lock = threading.Lock()
 
 
 # ==============================
 # EMBEDDING GENERATION
 # ==============================
+
+def _trim_text(text, max_chars):
+    trimmed = text.strip() if text else ""
+    if len(trimmed) <= max_chars:
+        return trimmed
+    return trimmed[:max_chars].rstrip() + "..."
+
 
 def get_embedding(text):
     """
@@ -39,10 +57,12 @@ def get_embedding(text):
         numpy.ndarray: 1536-dimensional float32 embedding vector
     """
 
+    trimmed = _trim_text(text, MEMORY_SNIPPET_CHARS)
+
     # Call OpenAI embeddings API
     emb = client.embeddings.create(
         model="text-embedding-3-small",
-        input=text
+        input=trimmed
     )
 
     # Convert embedding to NumPy float32 array
@@ -53,6 +73,16 @@ def get_embedding(text):
 # ==============================
 # MEMORY STORAGE
 # ==============================
+
+def build_memory_entry(user_text, assistant_text=None):
+    if not user_text:
+        return ""
+    if MEMORY_STORE_ASSISTANT and assistant_text:
+        entry = f"User: {user_text}\nAssistant: {assistant_text}"
+    else:
+        entry = user_text
+    return _trim_text(entry, MEMORY_SNIPPET_CHARS)
+
 
 def store_memory(text):
     """
@@ -67,15 +97,32 @@ def store_memory(text):
         text (str): Text to be remembered
     """
 
+    if not text:
+        return
+    trimmed = _trim_text(text, MEMORY_SNIPPET_CHARS)
+
     # Generate embedding for the text
-    vector = get_embedding(text)
+    vector = get_embedding(trimmed)
 
     # Add the vector to the FAISS index
     # Reshape is required: (1, DIM)
-    index.add(vector.reshape(1, -1))
+    with _lock:
+        index.add(vector.reshape(1, -1))
+        # Store the original text
+        texts.append(trimmed)
 
-    # Store the original text
-    texts.append(text)
+    if MEMORY_PERSIST:
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO memory (text, embedding) VALUES (?, ?)",
+                (trimmed, vector.tobytes()),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            logger.warning("memory_persist_failed")
 
 
 # ==============================
@@ -109,7 +156,36 @@ def search_memory(query, k=2):
 
     # Perform similarity search in FAISS index
     # Returns distances and indices
-    _, indices = index.search(q_vec.reshape(1, -1), k)
+    with _lock:
+        _, indices = index.search(q_vec.reshape(1, -1), k)
+        # Retrieve corresponding texts using indices
+        return [texts[i] for i in indices[0] if 0 <= i < len(texts)]
 
-    # Retrieve corresponding texts using indices
-    return [texts[i] for i in indices[0] if 0 <= i < len(texts)]
+
+def load_memory():
+    if not MEMORY_PERSIST:
+        return
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute("SELECT text, embedding FROM memory ORDER BY id ASC")
+        rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        logger.warning("memory_load_failed")
+        return
+
+    if not rows:
+        return
+
+    with _lock:
+        index.reset()
+        texts.clear()
+        for text, blob in rows:
+            if not blob:
+                continue
+            vec = np.frombuffer(blob, dtype="float32")
+            if vec.size != DIM:
+                continue
+            index.add(vec.reshape(1, -1))
+            texts.append(text)

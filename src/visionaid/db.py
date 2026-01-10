@@ -1,6 +1,10 @@
+"""SQLite persistence for assistant interactions."""
+
+import logging
 import sqlite3
 
 DB_NAME = "assistant.db"
+logger = logging.getLogger(__name__)
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -27,6 +31,15 @@ def init_db():
     )
     """)
 
+    # Semantic memory
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS memory (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        text TEXT NOT NULL,
+        embedding BLOB NOT NULL
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -45,4 +58,4 @@ def log_interaction(query, response, image_path=None):
         conn.commit()
         conn.close()
     except Exception as exc:
-        print(f"Failed to log interaction: {exc}")
+        logger.warning("db_log_interaction_failed error=%s", exc)

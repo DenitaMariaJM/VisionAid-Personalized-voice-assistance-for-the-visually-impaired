@@ -1,3 +1,5 @@
+"""Language detection helpers for enforcing English-only responses."""
+
 try:
     from langdetect import DetectorFactory, LangDetectException, detect
 

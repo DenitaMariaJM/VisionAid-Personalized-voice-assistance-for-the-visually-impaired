@@ -1,11 +1,17 @@
+"""Image capture and vision analysis utilities."""
+
 import base64
 from datetime import datetime  # For timestamp-based filenames
 import os                # For directory and file handling
+import logging
 
 import cv2               # OpenCV library for camera access
 from openai import OpenAI
 
+from .config import VISION_JPEG_QUALITY, VISION_MAX_DIM, VISION_MAX_TOKENS
+
 client = OpenAI()
+logger = logging.getLogger(__name__)
 
 
 # ==============================
@@ -73,8 +79,23 @@ def analyze_image(image_path, prompt):
     if not image_path:
         return ""
     try:
-        with open(image_path, "rb") as f:
-            b64_data = base64.b64encode(f.read()).decode("utf-8")
+        image = cv2.imread(image_path)
+        if image is None:
+            return ""
+        height, width = image.shape[:2]
+        max_dim = max(height, width)
+        if max_dim > VISION_MAX_DIM:
+            scale = VISION_MAX_DIM / float(max_dim)
+            new_size = (int(width * scale), int(height * scale))
+            image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
+        success, encoded = cv2.imencode(
+            ".jpg",
+            image,
+            [int(cv2.IMWRITE_JPEG_QUALITY), VISION_JPEG_QUALITY],
+        )
+        if not success:
+            return ""
+        b64_data = base64.b64encode(encoded.tobytes()).decode("utf-8")
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -99,9 +120,10 @@ def analyze_image(image_path, prompt):
                     ],
                 },
             ],
+            max_tokens=VISION_MAX_TOKENS,
         )
         message = response.choices[0].message
         return (message.content or "").strip()
     except Exception as exc:
-        print(f"Vision analysis failed: {exc}")
+        logger.warning("vision_analysis_failed error=%s", exc)
         return ""

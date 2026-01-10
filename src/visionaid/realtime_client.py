@@ -1,7 +1,10 @@
+"""Realtime audio assistant over WebSocket with local VAD and hooks."""
+
 import base64
+import io
 import json
+import logging
 import os
-import tempfile
 import threading
 import time
 import wave
@@ -17,20 +20,29 @@ from .config import (
     REALTIME_CHUNK_MS,
     REALTIME_MODEL,
     REALTIME_MIN_SPEECH_DURATION,
+    REALTIME_MAX_OUTPUT_TOKENS,
     REALTIME_OUTPUT_SUPPRESS_SECONDS,
+    REALTIME_MAX_BUFFER_SECONDS,
     REALTIME_RESPONSE_STYLE,
     REALTIME_SAMPLE_RATE,
     REALTIME_SILENCE_DURATION,
     REALTIME_SILENCE_THRESHOLD,
+    REALTIME_TRANSCRIPTION_MODEL,
+    REALTIME_TRANSCRIPT_TIMEOUT,
+    REALTIME_USE_LOCAL_FALLBACK,
     REALTIME_VOICE,
     REALTIME_WAKE_WORDS,
+    validate_config,
 )
 from .context import build_context
 from .db import init_db, log_interaction
-from .memory import store_memory
+from .logging_utils import configure_logging
+from .memory import build_memory_entry, load_memory, store_memory
 from .stt_whisper import transcribe_audio
 from .utils.command_validation import is_confident_command
 from .utils.language_guard import is_english
+
+logger = logging.getLogger(__name__)
 
 
 def _b64encode_audio(pcm_bytes):
@@ -52,6 +64,28 @@ def _audio_peak(pcm_bytes):
     if data.size == 0:
         return 0.0
     return float(np.max(np.abs(data))) / 32768.0
+
+
+def _extract_transcript(data):
+    event_type = str(data.get("type", ""))
+    if "transcription" not in event_type:
+        return ""
+    if not any(key in event_type for key in ("completed", "done", "final")):
+        return ""
+    for key in ("transcript", "text"):
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    item = data.get("item") or {}
+    content = item.get("content") or []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        for key in ("text", "transcript"):
+            value = part.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 
 def _suppress_alsa_errors():
@@ -78,6 +112,8 @@ def _suppress_alsa_errors():
 
 class RealtimeAssistant:
     def __init__(self):
+        configure_logging()
+        validate_config()
         self.api_key = os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
             raise RuntimeError("Set OPENAI_API_KEY env var first.")
@@ -102,15 +138,22 @@ class RealtimeAssistant:
         self._assistant_text = ""
         self._last_output_time = 0.0
         self._output_suppress_seconds = REALTIME_OUTPUT_SUPPRESS_SECONDS
+        self._max_buffer_bytes = int(
+            self.rate * REALTIME_MAX_BUFFER_SECONDS * self.sample_width
+        )
+        self._awaiting_transcript = False
+        self._pending_audio = None
+        self._pending_since = None
 
         init_db()
+        load_memory()
 
     def _send_event(self, event):
         try:
             if self._ws:
                 self._ws.send(json.dumps(event))
         except Exception as exc:
-            print(f"WebSocket send failed: {exc}")
+            logger.warning("websocket_send_failed error=%s", exc)
 
     def _reset_vad(self):
         self._buffer = bytearray()
@@ -118,39 +161,22 @@ class RealtimeAssistant:
         self._speech_duration = 0.0
         self._silence_duration = 0.0
 
-    def _write_wav(self, pcm_bytes):
-        temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        try:
-            with wave.open(temp_file, "wb") as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(self.sample_width)
-                wf.setframerate(self.rate)
-                wf.writeframes(pcm_bytes)
-            return temp_file.name
-        finally:
-            temp_file.close()
+    def _wav_bytes(self, pcm_bytes):
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(self.sample_width)
+            wf.setframerate(self.rate)
+            wf.writeframes(pcm_bytes)
+        return buffer.getvalue()
 
     def _build_context(self, user_text):
         extra_context, image_path = build_context(user_text)
         self._last_image_path = image_path
         return extra_context
 
-    def _handle_user_audio(self, pcm_bytes):
-        if not pcm_bytes or self._response_in_flight:
-            return
-
-        wav_path = None
-        try:
-            wav_path = self._write_wav(pcm_bytes)
-            user_text = transcribe_audio(wav_path)
-        finally:
-            if wav_path:
-                try:
-                    os.remove(wav_path)
-                except OSError:
-                    pass
-
-        if not user_text:
+    def _handle_user_text(self, user_text):
+        if not user_text or self._response_in_flight:
             return
 
         if not is_english(user_text):
@@ -161,10 +187,10 @@ class RealtimeAssistant:
                 "response": {
                     "output_modalities": ["audio", "text"],
                     "instructions": (
-                        f"{REALTIME_RESPONSE_STYLE}\n\n"
                         "Respond with: I can only communicate in English. "
                         "Please repeat in English."
                     ),
+                    "max_output_tokens": 40,
                 },
             }
             self._send_event(event)
@@ -186,15 +212,18 @@ class RealtimeAssistant:
         self._last_user_text = user_text
         extra_context = self._build_context(user_text)
 
-        instructions = f"{REALTIME_RESPONSE_STYLE}\n\nUser said: {user_text}"
         if extra_context:
-            instructions = f"{instructions}\n\n{extra_context}"
+            input_text = f"Context:\n{extra_context}\n\nUser: {user_text}"
+        else:
+            input_text = user_text
 
         event = {
             "type": "response.create",
             "response": {
                 "output_modalities": ["audio", "text"],
-                "instructions": instructions,
+                "instructions": REALTIME_RESPONSE_STYLE,
+                "input": [{"type": "input_text", "text": input_text}],
+                "max_output_tokens": REALTIME_MAX_OUTPUT_TOKENS,
                 "metadata": {"user_text": user_text},
             },
         }
@@ -202,14 +231,36 @@ class RealtimeAssistant:
         self._response_in_flight = True
         self._send_event(event)
 
+    def _queue_pending_audio(self, audio_bytes):
+        self._pending_audio = audio_bytes
+        self._pending_since = time.time()
+        self._awaiting_transcript = True
+
+    def _maybe_fallback_transcription(self):
+        if not REALTIME_USE_LOCAL_FALLBACK:
+            return
+        if not self._awaiting_transcript or not self._pending_audio:
+            return
+        if REALTIME_TRANSCRIPT_TIMEOUT <= 0:
+            return
+        if time.time() - self._pending_since < REALTIME_TRANSCRIPT_TIMEOUT:
+            return
+        wav_bytes = self._wav_bytes(self._pending_audio)
+        self._pending_audio = None
+        self._awaiting_transcript = False
+        transcript = transcribe_audio(wav_bytes)
+        if transcript:
+            self._handle_user_text(transcript)
+
     def _mic_stream_loop(self):
         while not self._stop_event.is_set():
+            self._maybe_fallback_transcription()
             try:
                 pcm, overflowed = self._audio_in.read(self.frames_per_chunk)
                 if overflowed:
-                    print("Audio input overflowed.")
+                    logger.warning("audio_input_overflowed")
             except Exception as exc:
-                print(f"Mic error: {exc}")
+                logger.warning("mic_read_failed error=%s", exc)
                 time.sleep(0.05)
                 continue
 
@@ -239,6 +290,10 @@ class RealtimeAssistant:
             if self._speech_detected:
                 self._silence_duration += self.chunk_ms / 1000.0
                 self._buffer.extend(pcm)
+                if len(self._buffer) > self._max_buffer_bytes:
+                    self._send_event({"type": "input_audio_buffer.clear"})
+                    self._reset_vad()
+                    continue
                 self._send_event(
                     {
                         "type": "input_audio_buffer.append",
@@ -253,11 +308,10 @@ class RealtimeAssistant:
                     self._send_event({"type": "input_audio_buffer.commit"})
                     self._send_event({"type": "input_audio_buffer.clear"})
                     self._reset_vad()
-                    threading.Thread(
-                        target=self._handle_user_audio,
-                        args=(audio_bytes,),
-                        daemon=True,
-                    ).start()
+                    self._queue_pending_audio(audio_bytes)
+                elif self._silence_duration >= REALTIME_SILENCE_DURATION:
+                    self._send_event({"type": "input_audio_buffer.clear"})
+                    self._reset_vad()
             else:
                 time.sleep(0.005)
 
@@ -276,6 +330,10 @@ class RealtimeAssistant:
                         "voice": REALTIME_VOICE,
                     },
                 },
+                "input_audio_transcription": {
+                    "model": REALTIME_TRANSCRIPTION_MODEL,
+                    "language": "en",
+                },
                 "instructions": REALTIME_RESPONSE_STYLE,
             },
         }
@@ -290,6 +348,13 @@ class RealtimeAssistant:
             return
 
         event_type = data.get("type")
+        transcript = _extract_transcript(data)
+        if transcript:
+            self._pending_audio = None
+            self._awaiting_transcript = False
+            self._handle_user_text(transcript)
+            return
+
         if event_type == "response.output_text.delta":
             delta = data.get("delta", "")
             if delta:
@@ -305,7 +370,7 @@ class RealtimeAssistant:
                     self._audio_out.write(pcm)
                     self._last_output_time = time.time()
                 except Exception as exc:
-                    print(f"Audio output error: {exc}")
+                    logger.warning("audio_output_failed error=%s", exc)
             return
 
         if event_type == "response.done":
@@ -317,7 +382,7 @@ class RealtimeAssistant:
             if self._last_user_text and assistant_text:
                 if MEMORY_ENABLED:
                     store_memory(
-                        f"User: {self._last_user_text}\nAssistant: {assistant_text}"
+                        build_memory_entry(self._last_user_text, assistant_text)
                     )
                 log_interaction(
                     self._last_user_text,
@@ -329,10 +394,11 @@ class RealtimeAssistant:
             return
 
     def _on_error(self, ws, error):
-        print(f"WebSocket error: {error}")
+        logger.warning("websocket_error error=%s", error)
 
     def _on_close(self, ws, close_status_code, close_msg):
-        print(f"WebSocket closed: {close_status_code} {close_msg}")
+        logger.info("websocket_closed status=%s message=%s",
+                    close_status_code, close_msg)
         self._stop_event.set()
 
     def _setup_audio(self):

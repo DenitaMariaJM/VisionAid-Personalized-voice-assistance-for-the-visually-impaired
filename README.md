@@ -41,7 +41,7 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ###  Voice Interaction
 - Realtime audio streaming (WebSocket)
-- Speech-to-text using OpenAI transcription
+- Speech-to-text using OpenAI realtime transcription
 - Text-to-speech using OpenAI audio output
 
 ###  Vision-Based Assistance
@@ -55,12 +55,15 @@ Unlike generic voice assistants, VisionAid prioritizes:
 - Safety-first language
 
 ###  Contextual Memory
-- Semantic memory using embeddings
+- Semantic memory using embeddings with SQLite persistence
 - Supports follow-up queries (e.g., “And on the left?”)
 
 ### Data Storage
 - SQLite database for storing interactions
 - Stores query, response, image reference, and timestamp
+
+### Observability
+- Structured logging (set `VISIONAID_LOG_LEVEL`)
 
 ---
 
@@ -72,30 +75,44 @@ src/visionaid/
   main.py
   realtime_client.py
   config.py
-  llm_response.py
   stt_whisper.py
-  tts_openai.py
-  voice.py
-  voice_io.py
+  logging_utils.py
   vision.py
   memory.py
   db.py
-  assets/
-    beep.wav
+  context.py
   utils/
     command_validation.py
+    language_guard.py
 ```
 
 ##  Quick Start
 
 ```
-python -m visionaid
-```
-
-You can also run the root entrypoint:
-
-```
 python main.py
 ```
 
+##  Configuration Notes
+
+- `OPENAI_API_KEY` must be set in your environment.
+- Realtime transcription model and fallback settings live in
+  `src/visionaid/config.py` (`REALTIME_TRANSCRIPTION_MODEL`,
+  `REALTIME_TRANSCRIPT_TIMEOUT`, `REALTIME_USE_LOCAL_FALLBACK`).
+- Memory persistence can be toggled with `MEMORY_PERSIST`.
+
+##  Setup Notes
+
+- Audio devices: if you get device errors, set `AUDIO_INPUT_DEVICE` and
+  `AUDIO_OUTPUT_DEVICE` in `src/visionaid/config.py` to the correct device
+  indices.
+- Logging verbosity: set `VISIONAID_LOG_LEVEL=DEBUG` for more detail.
+- Linux dependencies: install PortAudio headers before building audio
+  packages.
+
+```
+sudo apt install -y portaudio19-dev libsndfile1 python3-dev build-essential
+```
+
+- Camera access: ensure your user has permission to access the camera device
+  (e.g., add to the `video` group on Linux).
 
