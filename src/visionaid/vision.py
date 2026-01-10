@@ -1,6 +1,11 @@
-import cv2               # OpenCV library for camera access
-import os                # For directory and file handling
+import base64
 from datetime import datetime  # For timestamp-based filenames
+import os                # For directory and file handling
+
+import cv2               # OpenCV library for camera access
+from openai import OpenAI
+
+client = OpenAI()
 
 
 # ==============================
@@ -59,3 +64,44 @@ def capture_image():
     # - Passed to the LLM
     # - Stored in the database
     return path
+
+
+def analyze_image(image_path, prompt):
+    """
+    Sends an image to a vision-capable model for analysis.
+    """
+    if not image_path:
+        return ""
+    try:
+        with open(image_path, "rb") as f:
+            b64_data = base64.b64encode(f.read()).decode("utf-8")
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You analyze images for accessibility. Always respond "
+                        "in English. Focus on obstacles and navigation-"
+                        "relevant details."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{b64_data}"
+                            },
+                        },
+                    ],
+                },
+            ],
+        )
+        message = response.choices[0].message
+        return (message.content or "").strip()
+    except Exception as exc:
+        print(f"Vision analysis failed: {exc}")
+        return ""

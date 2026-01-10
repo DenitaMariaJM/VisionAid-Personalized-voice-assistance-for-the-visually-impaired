@@ -25,14 +25,14 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ##  How the System Works
 
-1. The system listens for a **wake word** (e.g., *Alexa*).
+1. The system streams audio in **realtime** over WebSocket.
 2. The user speaks a query.
-3. The system identifies whether the query requires **vision-based understanding**.
+3. The system detects whether the query requires **vision-based understanding**.
 4. If required, a real-time image is captured using the camera.
 5. Past relevant interactions are retrieved using **semantic memory**.
 6. The query and image are sent to a **vision-capable AI model**.
 7. The system generates an **accessibility-focused response**.
-8. The response is spoken aloud using **Google Text-to-Speech**.
+8. The response is spoken aloud using streamed audio.
 9. The interaction is stored in a local database.
 
 ---
@@ -40,9 +40,9 @@ Unlike generic voice assistants, VisionAid prioritizes:
 ##  Key Features
 
 ###  Voice Interaction
-- Wake-word activation
-- Speech-to-text using Google Speech Recognition
-- Text-to-speech using Google TTS
+- Realtime audio streaming (WebSocket)
+- Speech-to-text using OpenAI transcription
+- Text-to-speech using OpenAI audio output
 
 ###  Vision-Based Assistance
 - Real-time camera image capture
@@ -64,5 +64,38 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ---
 
+##  Repo Layout
+
+```
+src/visionaid/
+  __main__.py
+  main.py
+  realtime_client.py
+  config.py
+  llm_response.py
+  stt_whisper.py
+  tts_openai.py
+  voice.py
+  voice_io.py
+  vision.py
+  memory.py
+  db.py
+  assets/
+    beep.wav
+  utils/
+    command_validation.py
+```
+
+##  Quick Start
+
+```
+python -m visionaid
+```
+
+You can also run the root entrypoint:
+
+```
+python main.py
+```
 
 

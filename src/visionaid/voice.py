@@ -7,7 +7,7 @@ import soundfile as sf
 from openai import OpenAI
 
 try:
-    from config import (
+    from .config import (
         STT_MODEL,
         TTS_MODEL,
         TTS_VOICE,

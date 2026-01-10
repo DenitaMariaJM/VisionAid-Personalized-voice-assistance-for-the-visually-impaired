@@ -29,3 +29,20 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def log_interaction(query, response, image_path=None):
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute(
+            """
+            INSERT INTO interactions (query, response, image_path)
+            VALUES (?, ?, ?)
+            """,
+            (query, response, image_path),
+        )
+        conn.commit()
+        conn.close()
+    except Exception as exc:
+        print(f"Failed to log interaction: {exc}")
