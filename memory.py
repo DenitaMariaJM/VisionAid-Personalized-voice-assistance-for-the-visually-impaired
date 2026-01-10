@@ -99,6 +99,11 @@ def search_memory(query, k=2):
     if len(texts) == 0:
         return []
 
+    # Cap k to available memories to avoid invalid indices
+    k = min(k, len(texts))
+    if k <= 0:
+        return []
+
     # Convert query into embedding
     q_vec = get_embedding(query)
 
@@ -107,4 +112,4 @@ def search_memory(query, k=2):
     _, indices = index.search(q_vec.reshape(1, -1), k)
 
     # Retrieve corresponding texts using indices
-    return [texts[i] for i in indices[0] if i < len(texts)]
+    return [texts[i] for i in indices[0] if 0 <= i < len(texts)]

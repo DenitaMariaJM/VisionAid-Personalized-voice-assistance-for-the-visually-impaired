@@ -1,2 +1,30 @@
 WAKE_WORD = "alexa"
 MODEL = "gpt-4o-mini"
+
+# OpenAI speech configuration
+STT_MODEL = "gpt-4o-mini-transcribe"
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "alloy"
+TTS_SPEED = 1.0
+
+# Audio capture/playback settings
+STT_SAMPLE_RATE = 16000
+STT_CHANNELS = 1
+STT_PHRASE_TIME_LIMIT = 6
+STT_SILENCE_THRESHOLD = 0.01
+STT_SILENCE_DURATION = 0.8
+STT_MIN_SPEECH_DURATION = 0.3
+STT_CHUNK_DURATION = 0.2
+AUDIO_INPUT_DEVICE = None
+AUDIO_OUTPUT_DEVICE = None
+
+# Interaction behavior
+REQUIRE_WAKE_WORD = False
+DEBUG_SPEECH = True
+
+# Performance tuning
+MEMORY_ENABLED = True
+MEMORY_TOP_K = 2
+MEMORY_TIMEOUT = 1.0
+VISION_ENABLED = True
+VISION_TIMEOUT = 1.5

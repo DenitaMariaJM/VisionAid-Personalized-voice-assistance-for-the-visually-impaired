@@ -4,14 +4,25 @@
 
 import sqlite3          # For saving interactions to SQLite DB
 import base64            # For encoding images before sending to LLM
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from openai import OpenAI
 
 # Project-specific modules
-from config import WAKE_WORD
+from config import (
+    WAKE_WORD,
+    MODEL,
+    REQUIRE_WAKE_WORD,
+    DEBUG_SPEECH,
+    MEMORY_ENABLED,
+    MEMORY_TOP_K,
+    MEMORY_TIMEOUT,
+    VISION_ENABLED,
+    VISION_TIMEOUT,
+)
 from voice import listen, speak
 from vision import capture_image
 from memory import store_memory, search_memory
-from db import init_db
+from db import init_db, DB_NAME
 
 
 # ==============================
@@ -55,7 +66,7 @@ def save_interaction(query, answer, image_path):
     Saves the interaction details into the SQLite database.
     This function is isolated to ensure DB writes are reliable.
     """
-    conn = sqlite3.connect("assistant.db")
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
 
     c.execute(
@@ -68,6 +79,16 @@ def save_interaction(query, answer, image_path):
 
     conn.commit()
     conn.close()
+
+
+def format_memories(memories, max_chars=200):
+    if not memories:
+        return "None."
+    trimmed = []
+    for item in memories:
+        text = str(item).strip()
+        trimmed.append(text[:max_chars])
+    return "\n".join(trimmed)
 
 
 # ==============================
@@ -83,42 +104,76 @@ def run():
     # Greet the user once when assistant starts
     speak("Assistant is ready")
 
+    executor = ThreadPoolExecutor(max_workers=2)
+
     while True:
         try:
             # ------------------------------
             # 1. LISTEN TO USER
             # ------------------------------
-            text = listen().lower()
+            text = listen()
+            if not text:
+                continue
+            raw_text = text
+            text = text.lower()
+            if DEBUG_SPEECH:
+                print(f"Heard: {raw_text}")
 
             # Ignore speech unless wake word is detected
-            if WAKE_WORD not in text:
-                continue
+            if REQUIRE_WAKE_WORD and WAKE_WORD:
+                if WAKE_WORD not in text:
+                    if DEBUG_SPEECH:
+                        print(f'Wake word "{WAKE_WORD}" not detected.')
+                    continue
 
             # Remove wake word from spoken text
-            query = text.replace(WAKE_WORD, "").strip()
+            if REQUIRE_WAKE_WORD and WAKE_WORD:
+                query = text.replace(WAKE_WORD, "").strip()
+            else:
+                query = text.strip()
 
             # If user said only the wake word (e.g., "Alexa")
             if not query:
                 speak("Yes? Please tell me how I can help.")
                 continue
 
-
             # ------------------------------
             # 2. IMAGE CAPTURE (IF NEEDED)
             # ------------------------------
             image_path = None
+            image_future = None
 
             # Force image capture for vision-based questions
-            if is_vision_query(query):
-                image_path = capture_image()
-
+            if VISION_ENABLED and is_vision_query(query):
+                image_future = executor.submit(capture_image)
 
             # ------------------------------
             # 3. MEMORY RETRIEVAL
             # ------------------------------
-            # Fetch semantically similar past interactions
-            memories = search_memory(query)
+            memories = []
+            memory_future = None
+            if MEMORY_ENABLED:
+                memory_future = executor.submit(search_memory, query, MEMORY_TOP_K)
 
+            if memory_future:
+                try:
+                    memories = memory_future.result(timeout=MEMORY_TIMEOUT)
+                except TimeoutError:
+                    if DEBUG_SPEECH:
+                        print("Memory retrieval timed out.")
+                except Exception as exc:
+                    if DEBUG_SPEECH:
+                        print(f"Memory retrieval failed: {exc}")
+
+            if image_future:
+                try:
+                    image_path = image_future.result(timeout=VISION_TIMEOUT)
+                except TimeoutError:
+                    if DEBUG_SPEECH:
+                        print("Image capture timed out.")
+                except Exception as exc:
+                    if DEBUG_SPEECH:
+                        print(f"Image capture failed: {exc}")
 
             # ------------------------------
             # 4. PROMPT CONSTRUCTION
@@ -141,13 +196,11 @@ Response format:
 - End with a safety or movement suggestion.
 
 Previous context:
-{memories}
+{format_memories(memories)}
 
 User question:
 {query}
 """
-
-
 
             # ------------------------------
             # 5. LLM MESSAGE FORMAT
@@ -175,24 +228,21 @@ User question:
                     "content": prompt
                 }]
 
-
             # ------------------------------
             # 6. CALL THE LLM
             # ------------------------------
             response = client.chat.completions.create(
-                model="gpt-4o-mini",   # Vision-capable model
+                model=MODEL,
                 messages=messages
             )
 
             # Extract assistant's reply
             answer = response.choices[0].message.content
 
-
             # ------------------------------
             # 7. SPEAK RESPONSE
             # ------------------------------
             speak(answer)
-
 
             # ------------------------------
             # 8. STORE MEMORY & DB
@@ -202,7 +252,6 @@ User question:
 
             # Persist interaction in SQLite database
             save_interaction(query, answer, image_path)
-
 
         except Exception as e:
             # Catch-all to prevent assistant from crashing
