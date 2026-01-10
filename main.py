@@ -1,13 +1,9 @@
-from voice_io import listen_for_wake_word, record_command, play_beep
-from stt_whisper import transcribe_audio
-from llm_response import get_llm_response
-from tts_openai import speak
 import re
-from utils.command_validation import is_confident_command
 
-
-listen_for_wake_word()
-play_beep()          # 🔔 User hears confirmation
+from llm_response import get_llm_response
+from stt_whisper import transcribe_audio
+from tts_openai import speak
+from voice_io import listen_for_wake_word, play_beep, record_command
 
 WAKE_WORDS = ["al", "alexa"]
 FILLER_PHRASES = ["and the", "uh", "um", "hmm"]
@@ -46,8 +42,6 @@ def clean_and_validate_command(text):
 def main():
     print("🔊 Voice Assistant Started")
 
-    executor = ThreadPoolExecutor(max_workers=2)
-
     while True:
         listen_for_wake_word()
 
@@ -67,6 +61,10 @@ def main():
         print(f"\n👤 USER: {clean_text}")
 
         assistant_text = get_llm_response(clean_text)
+        if not assistant_text:
+            print("🤖 ASSISTANT: I'm having trouble right now. Please try again.")
+            speak("I'm having trouble right now. Please try again.")
+            continue
 
         print(f"🤖 ASSISTANT: {assistant_text}\n")
         speak(assistant_text)

@@ -1,16 +1,22 @@
+import os
+
 import speech_recognition as sr
-import wave
 from playsound import playsound
+
 WAKE_WORD = "al"
 recognizer = sr.Recognizer()
 recognizer.pause_threshold = 1.3
 
+_BEEP_PATH = os.path.join(os.path.dirname(__file__), "assets", "beep.wav")
 
 def play_beep():
     """
     Plays a short beep to indicate mic is ON.
     """
-    playsound("assets/beep.wav")
+    try:
+        playsound(_BEEP_PATH)
+    except Exception as exc:
+        print(f"Beep failed: {exc}")
 
 def listen_for_wake_word():
     with sr.Microphone() as source:
@@ -24,7 +30,13 @@ def listen_for_wake_word():
                 if WAKE_WORD in text:
                     print("🟢 Wake word detected")
                     return
-            except:
+            except sr.UnknownValueError:
+                continue
+            except sr.RequestError as exc:
+                print(f"Wake word recognition failed: {exc}")
+                continue
+            except Exception as exc:
+                print(f"Wake word listener failed: {exc}")
                 continue
 
 
