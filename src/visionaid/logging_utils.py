@@ -12,4 +12,6 @@ def configure_logging():
         level=level,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
         stream=sys.stdout,
+        force=True,
     )
+    print(f"[visionaid] logging level {level_name}", flush=True)

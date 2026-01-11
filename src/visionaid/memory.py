@@ -189,3 +189,26 @@ def load_memory():
                 continue
             index.add(vec.reshape(1, -1))
             texts.append(text)
+
+
+def clear_memory():
+    with _lock:
+        index.reset()
+        texts.clear()
+
+    if MEMORY_PERSIST:
+        try:
+            conn = sqlite3.connect(DB_NAME)
+            cur = conn.cursor()
+            cur.execute("DELETE FROM memory")
+            conn.commit()
+            conn.close()
+        except Exception:
+            logger.warning("memory_clear_failed")
+
+
+def list_memory(limit=3):
+    if limit <= 0:
+        return []
+    with _lock:
+        return texts[-limit:]

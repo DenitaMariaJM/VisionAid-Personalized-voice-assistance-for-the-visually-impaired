@@ -4,11 +4,23 @@ import base64
 from datetime import datetime  # For timestamp-based filenames
 import os                # For directory and file handling
 import logging
+import time
 
 import cv2               # OpenCV library for camera access
 from openai import OpenAI
 
-from .config import VISION_JPEG_QUALITY, VISION_MAX_DIM, VISION_MAX_TOKENS
+from .config import (
+    CAMERA_AUTO_PROBE,
+    CAMERA_BACKEND,
+    CAMERA_FRAME_HEIGHT,
+    CAMERA_FRAME_WIDTH,
+    CAMERA_INDEX,
+    CAMERA_PROBE_MAX,
+    CAMERA_WARMUP_FRAMES,
+    VISION_JPEG_QUALITY,
+    VISION_MAX_DIM,
+    VISION_MAX_TOKENS,
+)
 
 client = OpenAI()
 logger = logging.getLogger(__name__)
@@ -33,6 +45,36 @@ os.makedirs(IMAGE_DIR, exist_ok=True)
 # IMAGE CAPTURE FUNCTION
 # ==============================
 
+def try_capture_frame(index):
+    backend = None
+    if CAMERA_BACKEND == "v4l2":
+        backend = cv2.CAP_V4L2
+    elif CAMERA_BACKEND == "dshow":
+        backend = cv2.CAP_DSHOW
+    elif CAMERA_BACKEND == "avfoundation":
+        backend = cv2.CAP_AVFOUNDATION
+
+    cam = cv2.VideoCapture(index, backend) if backend is not None else cv2.VideoCapture(index)
+    if not cam.isOpened():
+        cam.release()
+        return None, None
+
+    if CAMERA_FRAME_WIDTH > 0:
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
+    if CAMERA_FRAME_HEIGHT > 0:
+        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
+
+    for _ in range(CAMERA_WARMUP_FRAMES):
+        cam.read()
+        time.sleep(0.02)
+
+    ret, frame = cam.read()
+    cam.release()
+    if not ret:
+        return None, None
+    return index, frame
+
+
 def capture_image():
     """
     Captures a single image from the default camera (camera index 0).
@@ -43,17 +85,21 @@ def capture_image():
     """
 
     # Open the default camera (0 = built-in webcam / USB camera)
-    cam = cv2.VideoCapture(0)
+    used_index, frame = try_capture_frame(CAMERA_INDEX)
+    if frame is None and CAMERA_AUTO_PROBE:
+        for idx in range(CAMERA_PROBE_MAX):
+            if idx == CAMERA_INDEX:
+                continue
+            used_index, frame = try_capture_frame(idx)
+            if frame is not None:
+                break
 
-    # Read a single frame from the camera
-    ret, frame = cam.read()
-
-    # Release the camera immediately to free resources
-    cam.release()
-
-    # If the frame was not captured successfully
-    # ret == False means camera access failed
-    if not ret:
+    if frame is None:
+        logger.warning(
+            "camera_capture_failed index=%s auto_probe=%s",
+            CAMERA_INDEX,
+            CAMERA_AUTO_PROBE,
+        )
         return None
 
     # Generate a unique filename using the current date and time
@@ -69,6 +115,8 @@ def capture_image():
     # Return the image path so it can be:
     # - Passed to the LLM
     # - Stored in the database
+    if used_index is not None and used_index != CAMERA_INDEX:
+        logger.info("camera_auto_probe_used index=%s", used_index)
     return path
 
 

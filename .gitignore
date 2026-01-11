@@ -1,7 +1,7 @@
 captured_images/
 tts_audio/
 
-assistant_db
+assistant.db
 
 # environment files
 venv/

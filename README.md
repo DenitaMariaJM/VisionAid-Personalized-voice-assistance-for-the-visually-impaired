@@ -27,13 +27,11 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 1. The system streams audio in **realtime** over WebSocket.
 2. The user speaks a query.
-3. The system detects whether the query requires **vision-based understanding**.
-4. If required, a real-time image is captured using the camera.
-5. Past relevant interactions are retrieved using **semantic memory**.
-6. The query and image are sent to a **vision-capable AI model**.
-7. The system generates an **accessibility-focused response**.
-8. The response is spoken aloud using streamed audio.
-9. The interaction is stored in a local database.
+3. The model uses **tool calls** to request actions (camera capture, memory search).
+4. The client executes tools locally and sends results back.
+5. The model continues with the new context to answer.
+6. The response is spoken aloud using streamed audio.
+7. The interaction is stored in a local database.
 
 ---
 
@@ -43,6 +41,10 @@ Unlike generic voice assistants, VisionAid prioritizes:
 - Realtime audio streaming (WebSocket)
 - Speech-to-text using OpenAI realtime transcription
 - Text-to-speech using OpenAI audio output
+
+###  Tool-Driven Actions
+- Camera capture and vision analysis via tool calls
+- Memory search/store/list/clear via tool calls
 
 ###  Vision-Based Assistance
 - Real-time camera image capture
@@ -75,15 +77,17 @@ src/visionaid/
   main.py
   realtime_client.py
   config.py
+  tools.py
+  tool_access.py
   stt_whisper.py
   logging_utils.py
   vision.py
   memory.py
   db.py
-  context.py
   utils/
     command_validation.py
     language_guard.py
+permissions.py
 ```
 
 ##  Quick Start
@@ -116,3 +120,10 @@ sudo apt install -y portaudio19-dev libsndfile1 python3-dev build-essential
 - Camera access: ensure your user has permission to access the camera device
   (e.g., add to the `video` group on Linux).
 
+##  Permissions Check
+
+You can run a quick hardware access check before launching the app:
+
+```
+python permissions.py
+```

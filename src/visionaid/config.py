@@ -1,48 +1,27 @@
 """Runtime configuration constants for VisionAid."""
 
-WAKE_WORD = "alexa"
-MODEL = "gpt-4o-mini"
-
-# OpenAI speech configuration
-STT_MODEL = "gpt-4o-mini-transcribe"
-TTS_MODEL = "gpt-4o-mini-tts"
-TTS_VOICE = "alloy"
-TTS_SPEED = 1.0
-
-# Audio capture/playback settings
-STT_SAMPLE_RATE = 16000
-STT_CHANNELS = 1
-STT_PHRASE_TIME_LIMIT = 6
-STT_SILENCE_THRESHOLD = 0.01
-STT_SILENCE_DURATION = 0.8
-STT_MIN_SPEECH_DURATION = 0.3
-STT_CHUNK_DURATION = 0.2
 AUDIO_INPUT_DEVICE = None
 AUDIO_OUTPUT_DEVICE = None
 
-# Interaction behavior
-REQUIRE_WAKE_WORD = False
-DEBUG_SPEECH = True
-
+STT_MODEL = "gpt-4o-mini-transcribe"
 # Performance tuning
 MEMORY_ENABLED = True
-MEMORY_TOP_K = 2
-MEMORY_TIMEOUT = 1.0
 MEMORY_PERSIST = True
-VISION_ENABLED = True
-VISION_TIMEOUT = 1.5
 MEMORY_SNIPPET_CHARS = 240
-VISION_SNIPPET_CHARS = 280
-CONTEXT_MAX_CHARS = 520
-MEMORY_MIN_CHARS = 12
-MAX_RESPONSE_TOKENS = 150
 VISION_MAX_TOKENS = 100
 MEMORY_STORE_ASSISTANT = False
 VISION_MAX_DIM = 640
 VISION_JPEG_QUALITY = 70
+CAMERA_INDEX = 0
+CAMERA_AUTO_PROBE = True
+CAMERA_PROBE_MAX = 4
+CAMERA_BACKEND = "v4l2"
+CAMERA_WARMUP_FRAMES = 4
+CAMERA_FRAME_WIDTH = 0
+CAMERA_FRAME_HEIGHT = 0
+TOOL_ACCESS_RECHECK_SECONDS = 30.0
 
 # Realtime settings
-REALTIME_ENABLED = True
 REALTIME_MODEL = "gpt-4o-realtime-preview"
 REALTIME_VOICE = "alloy"
 REALTIME_SAMPLE_RATE = 24000
@@ -54,13 +33,21 @@ REALTIME_OUTPUT_SUPPRESS_SECONDS = 0.6
 REALTIME_MAX_OUTPUT_TOKENS = 140
 REALTIME_MAX_BUFFER_SECONDS = 6.0
 REALTIME_RESPONSE_STYLE = (
-    "Respond in English. Be concise and action-oriented. Ask a brief "
+    "Respond only in English. Never use any other language. If the user "
+    "speaks another language, reply with: I can only communicate in English. "
+    "Please repeat in English. Be concise and action-oriented. Ask a brief "
     "follow-up question if needed."
+)
+REALTIME_TOOL_GUIDANCE = (
+    "Use tools when needed. For vision questions, you MUST call capture_image "
+    "and then analyze_image with the user's request before answering. For "
+    "memory, use search_memory, store_memory, list_memory, or clear_memory."
 )
 REALTIME_WAKE_WORDS = []
 REALTIME_TRANSCRIPTION_MODEL = STT_MODEL
 REALTIME_TRANSCRIPT_TIMEOUT = 3.0
 REALTIME_USE_LOCAL_FALLBACK = False
+REALTIME_TOOL_CHOICE = "auto"
 
 
 def _require(condition, message):
@@ -96,9 +83,26 @@ def validate_config():
              "REALTIME_MAX_BUFFER_SECONDS must be > 0.")
     _require(isinstance(REALTIME_WAKE_WORDS, list),
              "REALTIME_WAKE_WORDS must be a list.")
-    _require(MAX_RESPONSE_TOKENS > 0, "MAX_RESPONSE_TOKENS must be > 0.")
+    _require(REALTIME_TOOL_CHOICE in ("auto", "none"),
+             "REALTIME_TOOL_CHOICE must be 'auto' or 'none'.")
     _require(VISION_MAX_TOKENS > 0, "VISION_MAX_TOKENS must be > 0.")
     _require(VISION_MAX_DIM > 0, "VISION_MAX_DIM must be > 0.")
     _require(1 <= VISION_JPEG_QUALITY <= 100,
              "VISION_JPEG_QUALITY must be in [1, 100].")
-    _require(MEMORY_TOP_K >= 0, "MEMORY_TOP_K must be >= 0.")
+    _require(MEMORY_SNIPPET_CHARS > 0, "MEMORY_SNIPPET_CHARS must be > 0.")
+    _require(isinstance(CAMERA_INDEX, int) and CAMERA_INDEX >= 0,
+             "CAMERA_INDEX must be a non-negative integer.")
+    _require(isinstance(CAMERA_AUTO_PROBE, bool),
+             "CAMERA_AUTO_PROBE must be a boolean.")
+    _require(isinstance(CAMERA_PROBE_MAX, int) and CAMERA_PROBE_MAX > 0,
+             "CAMERA_PROBE_MAX must be a positive integer.")
+    _require(CAMERA_BACKEND in (None, "", "v4l2", "dshow", "avfoundation"),
+             "CAMERA_BACKEND must be None or one of: v4l2, dshow, avfoundation.")
+    _require(isinstance(CAMERA_WARMUP_FRAMES, int) and CAMERA_WARMUP_FRAMES >= 0,
+             "CAMERA_WARMUP_FRAMES must be >= 0.")
+    _require(isinstance(CAMERA_FRAME_WIDTH, int) and CAMERA_FRAME_WIDTH >= 0,
+             "CAMERA_FRAME_WIDTH must be >= 0.")
+    _require(isinstance(CAMERA_FRAME_HEIGHT, int) and CAMERA_FRAME_HEIGHT >= 0,
+             "CAMERA_FRAME_HEIGHT must be >= 0.")
+    _require(TOOL_ACCESS_RECHECK_SECONDS >= 0,
+             "TOOL_ACCESS_RECHECK_SECONDS must be >= 0.")
