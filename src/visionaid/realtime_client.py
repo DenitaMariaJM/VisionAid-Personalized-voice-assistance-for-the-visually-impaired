@@ -40,7 +40,7 @@ from .db import init_db, log_interaction
 from .logging_utils import configure_logging
 from .memory import build_memory_entry, load_memory, store_memory
 from .stt_whisper import transcribe_audio
-from .tools import TOOLS, execute_tool, serialize_tool_result
+from .tools import TOOLS_OPENAI, execute_tool, serialize_tool_result
 from .tool_access import check_camera_access, should_recheck
 from .utils.language_guard import is_english
 
@@ -224,7 +224,7 @@ class RealtimeAssistant:
                     "instructions": (
                         f"{REALTIME_RESPONSE_STYLE}\n\n{REALTIME_TOOL_GUIDANCE}"
                     ),
-                    "tools": TOOLS,
+                    "tools": TOOLS_OPENAI,
                     "tool_choice": REALTIME_TOOL_CHOICE,
                 },
             }
@@ -409,7 +409,7 @@ class RealtimeAssistant:
                 ),
                 "input": [{"type": "input_text", "text": user_text}],
                 "max_output_tokens": REALTIME_MAX_OUTPUT_TOKENS,
-                "tools": TOOLS,
+                "tools": TOOLS_OPENAI,
                 "tool_choice": tool_choice,
                 "metadata": {"user_text": user_text},
             },
@@ -535,7 +535,7 @@ class RealtimeAssistant:
                 "instructions": (
                     f"{REALTIME_RESPONSE_STYLE}\n\n{REALTIME_TOOL_GUIDANCE}"
                 ),
-                "tools": TOOLS,
+                "tools": TOOLS_OPENAI,
                 "tool_choice": REALTIME_TOOL_CHOICE,
             },
         }
