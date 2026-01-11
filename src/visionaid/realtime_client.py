@@ -600,7 +600,6 @@ class RealtimeAssistant:
         session_update = {
             "type": "session.update",
             "session": {
-                "type": "realtime",
                 "output_modalities": ["audio", "text"],
                 "audio": {
                     "input": {
