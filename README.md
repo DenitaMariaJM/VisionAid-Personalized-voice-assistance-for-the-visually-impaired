@@ -45,6 +45,7 @@ Unlike generic voice assistants, VisionAid prioritizes:
 ###  Tool-Driven Actions
 - Camera capture and vision analysis via tool calls
 - Memory search/store/list/clear via tool calls
+- Tool choice is model-driven (no keyword gating in the client)
 
 ###  Vision-Based Assistance
 - Real-time camera image capture
@@ -85,7 +86,6 @@ src/visionaid/
   memory.py
   db.py
   utils/
-    command_validation.py
     language_guard.py
 permissions.py
 ```

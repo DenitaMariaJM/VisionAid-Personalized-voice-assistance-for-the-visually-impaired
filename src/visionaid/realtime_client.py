@@ -32,7 +32,6 @@ from .config import (
     REALTIME_TRANSCRIPTION_MODEL,
     REALTIME_TRANSCRIPT_TIMEOUT,
     REALTIME_USE_LOCAL_FALLBACK,
-    REALTIME_VOICE,
     REALTIME_WAKE_WORDS,
     TOOL_ACCESS_RECHECK_SECONDS,
     validate_config,
@@ -46,37 +45,6 @@ from .tool_access import check_camera_access, should_recheck
 from .utils.language_guard import is_english
 
 logger = logging.getLogger(__name__)
-
-VISION_QUERY_KEYWORDS = (
-    "around me",
-    "around",
-    "surroundings",
-    "what do you see",
-    "what is there",
-    "what's there",
-    "look",
-    "see",
-    "scan",
-    "check obstacles",
-    "obstacle",
-    "obstacles",
-    "ahead",
-    "in front",
-    "left",
-    "right",
-    "take a picture",
-    "take a photo",
-    "capture",
-    "camera",
-)
-MEMORY_QUERY_KEYWORDS = (
-    "remember",
-    "recall",
-    "what did i say",
-    "what do you remember",
-    "last time",
-    "previously",
-)
 
 
 def _debug(message):
@@ -103,22 +71,6 @@ def _audio_peak(pcm_bytes):
     if data.size == 0:
         return 0.0
     return float(np.max(np.abs(data))) / 32768.0
-
-
-def _needs_vision(text):
-    lowered = text.lower()
-    return any(key in lowered for key in VISION_QUERY_KEYWORDS)
-
-
-def _needs_memory(text):
-    lowered = text.lower()
-    return any(key in lowered for key in MEMORY_QUERY_KEYWORDS)
-
-
-def _format_memory(results):
-    if not results:
-        return ""
-    return "Memory recall: " + " | ".join(results)
 
 
 def _extract_transcript(data):
@@ -239,6 +191,8 @@ class RealtimeAssistant:
         if isinstance(result, dict) and result.get("image_path"):
             self._last_image_path = result.get("image_path")
             self._camera_ok = True
+        if not isinstance(result, dict):
+            result = {"ok": False, "error": f"{name} returned no result."}
         if name in ("capture_image", "analyze_image") and not result.get("ok", True):
             if not camera_ok:
                 result = {
@@ -248,6 +202,10 @@ class RealtimeAssistant:
                         "CAMERA_INDEX."
                     ),
                 }
+        if not result.get("ok", True) and not result.get("error"):
+            result["error"] = (
+                f"{name} failed. Please check permissions and try again."
+            )
 
         event = {
             "type": "conversation.item.create",
@@ -262,7 +220,7 @@ class RealtimeAssistant:
             {
                 "type": "response.create",
                 "response": {
-                    "output_modalities": ["audio", "text"],
+                    "modalities": ["audio", "text"],
                     "instructions": (
                         f"{REALTIME_RESPONSE_STYLE}\n\n{REALTIME_TOOL_GUIDANCE}"
                     ),
@@ -414,7 +372,7 @@ class RealtimeAssistant:
             event = {
                 "type": "response.create",
                 "response": {
-                    "output_modalities": ["audio", "text"],
+                    "modalities": ["audio", "text"],
                     "instructions": (
                         "Respond with: I can only communicate in English. "
                         "Please repeat in English."
@@ -445,7 +403,7 @@ class RealtimeAssistant:
         event = {
             "type": "response.create",
             "response": {
-                "output_modalities": ["audio", "text"],
+                "modalities": ["audio", "text"],
                 "instructions": (
                     f"{REALTIME_RESPONSE_STYLE}\n\n{REALTIME_TOOL_GUIDANCE}"
                 ),
@@ -461,47 +419,9 @@ class RealtimeAssistant:
         self._send_event(event)
 
     def _apply_inference_layer(self, user_text):
-        context_lines = []
-        tool_choice = REALTIME_TOOL_CHOICE
-
-        needs_vision = _needs_vision(user_text)
-        needs_memory = _needs_memory(user_text)
-        _debug(f"inference_plan vision={needs_vision} memory={needs_memory}")
-
-        if needs_vision:
-            _debug("inference_layer vision_required")
-            result = execute_tool("analyze_image", {"query": user_text})
-            ok_value = result.get("ok") if isinstance(result, dict) else None
-            keys = sorted(result.keys()) if isinstance(result, dict) else []
-            _debug(f"vision_tool_result ok={ok_value} keys={keys}")
-            if isinstance(result, dict) and result.get("image_path"):
-                self._last_image_path = result["image_path"]
-            if isinstance(result, dict) and result.get("analysis"):
-                context_lines.append(f"Vision analysis: {result['analysis']}")
-            else:
-                error = ""
-                if isinstance(result, dict):
-                    error = result.get("error", "")
-                context_lines.append(error or "Vision analysis unavailable.")
-            tool_choice = "none"
-
-        if needs_memory:
-            _debug("inference_layer memory_required")
-            result = execute_tool("search_memory", {"query": user_text, "k": 2})
-            keys = sorted(result.keys()) if isinstance(result, dict) else []
-            _debug(f"memory_tool_result keys={keys}")
-            memory_line = ""
-            if isinstance(result, dict):
-                memory_line = _format_memory(result.get("results", []))
-            if memory_line:
-                context_lines.append(memory_line)
-                tool_choice = "none"
-
-        if context_lines:
-            context = "\n".join(context_lines)
-            user_text = f"{user_text}\n\nContext:\n{context}"
-
-        return user_text, tool_choice
+        # Pass-through: let the model decide when to call tools.
+        _debug("inference_plan model_driven_tools")
+        return user_text, REALTIME_TOOL_CHOICE
 
     def _queue_pending_audio(self, audio_bytes):
         self._pending_audio = audio_bytes
@@ -585,8 +505,15 @@ class RealtimeAssistant:
                         f"audio_commit bytes={len(audio_bytes)} "
                         f"speech_seconds={self._speech_duration:.2f}"
                     )
-                    self._send_event({"type": "input_audio_buffer.commit"})
-                    self._send_event({"type": "input_audio_buffer.clear"})
+                    self._send_event(
+                        {
+                            "type": "input_audio_buffer.commit",
+                            "event_id": "commit_audio",
+                        }
+                    )
+                    self._send_event(
+                        {"type": "input_audio_buffer.clear", "event_id": "clear_audio"}
+                    )
                     self._reset_vad()
                     self._queue_pending_audio(audio_bytes)
                 elif self._silence_duration >= REALTIME_SILENCE_DURATION:
@@ -600,17 +527,7 @@ class RealtimeAssistant:
         session_update = {
             "type": "session.update",
             "session": {
-                "output_modalities": ["audio", "text"],
-                "audio": {
-                    "input": {
-                        "format": {"type": "audio/pcm", "rate": self.rate},
-                        "turn_detection": {"type": "semantic_vad"},
-                    },
-                    "output": {
-                        "format": {"type": "audio/pcm"},
-                        "voice": REALTIME_VOICE,
-                    },
-                },
+                "modalities": ["audio", "text"],
                 "input_audio_transcription": {
                     "model": REALTIME_TRANSCRIPTION_MODEL,
                     "language": "en",
@@ -622,26 +539,37 @@ class RealtimeAssistant:
                 "tool_choice": REALTIME_TOOL_CHOICE,
             },
         }
+        # Debug: log the session update payload
+        _debug(f"[WS] Sending session update: {json.dumps(session_update)[:500]}")
         self._send_event(session_update)
         _debug("session_update_sent")
 
         threading.Thread(target=self._mic_stream_loop, daemon=True).start()
 
     def _on_message(self, ws, message):
+        # Debug: log all incoming WebSocket messages for troubleshooting
+        _debug(f"[WS] Incoming message: {message[:500]}")
         try:
             data = json.loads(message)
         except json.JSONDecodeError:
+            _debug("[WS] JSON decode error")
             return
+
+        # Debug: log parsed event type and keys
+        event_type = data.get("type")
+        _debug(f"[WS] Event type: {event_type}, keys: {list(data.keys())}")
 
         if self._handle_tool_event(data):
+            _debug(f"[WS] Tool event handled: {event_type}")
             return
 
-        event_type = data.get("type")
         if not self._logged_first_event and event_type:
             _debug(f"realtime_event_first type={event_type}")
             self._logged_first_event = True
         if event_type == "error":
             _debug(f"realtime_error {data}")
+        elif event_type:
+            logger.debug("realtime_event type=%s data=%s", event_type, data)
         logger.debug("realtime_event type=%s", event_type)
         transcript = _extract_transcript(data)
         if transcript:
@@ -688,7 +616,7 @@ class RealtimeAssistant:
                         {
                             "type": "response.create",
                             "response": {
-                                "output_modalities": ["audio", "text"],
+                                "modalities": ["audio", "text"],
                                 "instructions": (
                                     "Respond with: I can only communicate in "
                                     "English. Please repeat in English."
