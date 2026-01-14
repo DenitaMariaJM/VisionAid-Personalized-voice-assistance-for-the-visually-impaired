@@ -25,12 +25,12 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ##  How the System Works
 
-1. The system streams audio in **realtime** over WebSocket.
-2. The user speaks a query.
-3. The model uses **tool calls** to request actions (camera capture, memory search).
-4. The client executes tools locally and sends results back.
-5. The model continues with the new context to answer.
-6. The response is spoken aloud using streamed audio.
+1. The system captures a single utterance from the microphone.
+2. The utterance is transcribed to text (STT).
+3. An action agent decides whether to use camera and/or memory.
+4. If needed, the client captures an image and runs image understanding.
+5. The final assistant model answers using the user query + vision/memory context.
+6. The response is also spoken aloud (TTS).
 7. The interaction is stored in a local database.
 
 ---
@@ -38,14 +38,13 @@ Unlike generic voice assistants, VisionAid prioritizes:
 ##  Key Features
 
 ###  Voice Interaction
-- Realtime audio streaming (WebSocket)
-- Speech-to-text using OpenAI realtime transcription
-- Text-to-speech using OpenAI audio output
+- Local microphone capture (simple VAD)
+- Speech-to-text using OpenAI transcription
+- Text-to-speech using OpenAI TTS + local audio playback
 
 ###  Tool-Driven Actions
-- Camera capture and vision analysis via tool calls
-- Memory search/store/list/clear via tool calls
-- Tool choice is model-driven (no keyword gating in the client)
+- Camera capture and vision analysis via an action-planning agent
+- Memory search/store via an action-planning agent
 
 ###  Vision-Based Assistance
 - Real-time camera image capture
@@ -76,9 +75,11 @@ Unlike generic voice assistants, VisionAid prioritizes:
 src/visionaid/
   __main__.py
   main.py
-  realtime_client.py
+  pipeline.py
+  agent.py
+  audio_io.py
+  tts.py
   config.py
-  tools.py
   tool_access.py
   stt_whisper.py
   logging_utils.py
@@ -100,8 +101,7 @@ python main.py
 
 - `OPENAI_API_KEY` must be set in your environment.
 - Realtime transcription model and fallback settings live in
-  `src/visionaid/config.py` (`REALTIME_TRANSCRIPTION_MODEL`,
-  `REALTIME_TRANSCRIPT_TIMEOUT`, `REALTIME_USE_LOCAL_FALLBACK`).
+  `src/visionaid/config.py` (STT + VAD + models).
 - Memory persistence can be toggled with `MEMORY_PERSIST`.
 
 ##  Setup Notes

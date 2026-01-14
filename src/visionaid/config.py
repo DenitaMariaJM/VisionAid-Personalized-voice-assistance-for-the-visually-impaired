@@ -8,8 +8,9 @@ STT_MODEL = "gpt-4o-mini-transcribe"
 MEMORY_ENABLED = True
 MEMORY_PERSIST = True
 MEMORY_SNIPPET_CHARS = 240
-VISION_MAX_TOKENS = 100
+VISION_MAX_TOKENS = 60
 MEMORY_STORE_ASSISTANT = False
+MEMORY_STORE_EVERY_TURN = False
 VISION_MAX_DIM = 640
 VISION_JPEG_QUALITY = 70
 CAMERA_INDEX = 0
@@ -21,48 +22,25 @@ CAMERA_FRAME_WIDTH = 0
 CAMERA_FRAME_HEIGHT = 0
 TOOL_ACCESS_RECHECK_SECONDS = 30.0
 
-# Realtime settings
-REALTIME_MODEL = "gpt-4o-realtime-preview"
-REALTIME_VOICE = "alloy"
+# Non-realtime pipeline models
+AGENT_MODEL = "gpt-4o-mini"
+ASSISTANT_MODEL = "gpt-4o-mini"
+VISION_MODEL = "gpt-4o-mini"
+AGENT_MAX_TOKENS = 70
+ASSISTANT_MAX_TOKENS = 120
+MEMORY_TOP_K = 1
+AGENT_LLM_FALLBACK_ONLY = True
+TTS_ENABLED = True
+TTS_MODEL = "gpt-4o-mini-tts"
+TTS_VOICE = "alloy"
+TTS_FORMAT = "wav"
+
+# Shared audio/VAD settings (also used by the non-realtime pipeline)
 REALTIME_SAMPLE_RATE = 24000
 REALTIME_CHUNK_MS = 20
 REALTIME_SILENCE_THRESHOLD = 0.01
 REALTIME_SILENCE_DURATION = 0.8
-REALTIME_MIN_SPEECH_DURATION = 0.3
-REALTIME_OUTPUT_SUPPRESS_SECONDS = 0.6
-REALTIME_MAX_OUTPUT_TOKENS = 140
 REALTIME_MAX_BUFFER_SECONDS = 6.0
-REALTIME_RESPONSE_STYLE = (
-    "You are VisionAid, an assistive voice system for the visually impaired. "
-    "Always respond ONLY in English. If the user speaks another language, reply: "
-    'I can only communicate in English. Please repeat in English.' 
-    "Be extremely concise, direct, and action-oriented. "
-    "Prioritize navigation safety, obstacle awareness, and direction-based guidance (front/left/right). "
-    "Never describe colors, decorations, or irrelevant visual details. "
-    "If clarification is needed, ask a short follow-up question."
-)
-REALTIME_TOOL_GUIDANCE = (
-    "You MUST use tools for all vision or memory-related questions. "
-    "For any question about the environment, navigation, or obstacles, ALWAYS call capture_image first, "
-    "then call analyze_image with the user's request and the captured image. "
-    "Do NOT answer vision questions without using both tools. "
-    "For memory, use search_memory, store_memory, list_memory, or clear_memory as appropriate. "
-    "\n\n"
-    "Example (vision):\n"
-    "User: What is in front of me?\n"
-    "Assistant: (call capture_image, then analyze_image)\n"
-    "\n"
-    "Example (memory):\n"
-    "User: Remind me what I asked earlier.\n"
-    "Assistant: (call search_memory with the query)\n"
-    "\n"
-    "Never answer a vision or memory question without using the appropriate tool(s)."
-)
-REALTIME_WAKE_WORDS = []
-REALTIME_TRANSCRIPTION_MODEL = STT_MODEL
-REALTIME_TRANSCRIPT_TIMEOUT = 3.0
-REALTIME_USE_LOCAL_FALLBACK = False
-REALTIME_TOOL_CHOICE = "auto"
 
 
 def _require(condition, message):
@@ -73,38 +51,42 @@ def _require(condition, message):
 def validate_config():
     _require(isinstance(STT_MODEL, str) and STT_MODEL.strip(),
              "STT_MODEL must be a non-empty string.")
-    _require(isinstance(REALTIME_TRANSCRIPTION_MODEL, str)
-             and REALTIME_TRANSCRIPTION_MODEL.strip(),
-             "REALTIME_TRANSCRIPTION_MODEL must be a non-empty string.")
-    _require(REALTIME_TRANSCRIPT_TIMEOUT >= 0,
-             "REALTIME_TRANSCRIPT_TIMEOUT must be >= 0.")
-    _require(isinstance(REALTIME_MODEL, str) and REALTIME_MODEL.strip(),
-             "REALTIME_MODEL must be a non-empty string.")
-    _require(isinstance(REALTIME_VOICE, str) and REALTIME_VOICE.strip(),
-             "REALTIME_VOICE must be a non-empty string.")
+    _require(isinstance(AGENT_MODEL, str) and AGENT_MODEL.strip(),
+             "AGENT_MODEL must be a non-empty string.")
+    _require(isinstance(ASSISTANT_MODEL, str) and ASSISTANT_MODEL.strip(),
+             "ASSISTANT_MODEL must be a non-empty string.")
+    _require(isinstance(VISION_MODEL, str) and VISION_MODEL.strip(),
+             "VISION_MODEL must be a non-empty string.")
+    _require(isinstance(AGENT_MAX_TOKENS, int) and AGENT_MAX_TOKENS > 0,
+             "AGENT_MAX_TOKENS must be a positive integer.")
+    _require(isinstance(ASSISTANT_MAX_TOKENS, int) and ASSISTANT_MAX_TOKENS > 0,
+             "ASSISTANT_MAX_TOKENS must be a positive integer.")
+    _require(isinstance(MEMORY_TOP_K, int) and MEMORY_TOP_K > 0,
+             "MEMORY_TOP_K must be a positive integer.")
+    _require(isinstance(AGENT_LLM_FALLBACK_ONLY, bool),
+             "AGENT_LLM_FALLBACK_ONLY must be a boolean.")
+    _require(isinstance(TTS_ENABLED, bool), "TTS_ENABLED must be a boolean.")
+    _require(isinstance(TTS_MODEL, str) and TTS_MODEL.strip(),
+             "TTS_MODEL must be a non-empty string.")
+    _require(isinstance(TTS_VOICE, str) and TTS_VOICE.strip(),
+             "TTS_VOICE must be a non-empty string.")
+    _require(TTS_FORMAT in ("wav", "mp3", "pcm"),
+             "TTS_FORMAT must be one of: wav, mp3, pcm.")
     _require(REALTIME_SAMPLE_RATE > 0, "REALTIME_SAMPLE_RATE must be > 0.")
     _require(REALTIME_CHUNK_MS > 0, "REALTIME_CHUNK_MS must be > 0.")
-    _require(REALTIME_MIN_SPEECH_DURATION > 0,
-             "REALTIME_MIN_SPEECH_DURATION must be > 0.")
     _require(0 < REALTIME_SILENCE_THRESHOLD <= 1.0,
              "REALTIME_SILENCE_THRESHOLD must be in (0, 1].")
     _require(REALTIME_SILENCE_DURATION > 0,
              "REALTIME_SILENCE_DURATION must be > 0.")
-    _require(REALTIME_OUTPUT_SUPPRESS_SECONDS >= 0,
-             "REALTIME_OUTPUT_SUPPRESS_SECONDS must be >= 0.")
-    _require(REALTIME_MAX_OUTPUT_TOKENS > 0,
-             "REALTIME_MAX_OUTPUT_TOKENS must be > 0.")
     _require(REALTIME_MAX_BUFFER_SECONDS > 0,
              "REALTIME_MAX_BUFFER_SECONDS must be > 0.")
-    _require(isinstance(REALTIME_WAKE_WORDS, list),
-             "REALTIME_WAKE_WORDS must be a list.")
-    _require(REALTIME_TOOL_CHOICE in ("auto", "none"),
-             "REALTIME_TOOL_CHOICE must be 'auto' or 'none'.")
     _require(VISION_MAX_TOKENS > 0, "VISION_MAX_TOKENS must be > 0.")
     _require(VISION_MAX_DIM > 0, "VISION_MAX_DIM must be > 0.")
     _require(1 <= VISION_JPEG_QUALITY <= 100,
              "VISION_JPEG_QUALITY must be in [1, 100].")
     _require(MEMORY_SNIPPET_CHARS > 0, "MEMORY_SNIPPET_CHARS must be > 0.")
+    _require(isinstance(MEMORY_STORE_EVERY_TURN, bool),
+             "MEMORY_STORE_EVERY_TURN must be a boolean.")
     _require(isinstance(CAMERA_INDEX, int) and CAMERA_INDEX >= 0,
              "CAMERA_INDEX must be a non-negative integer.")
     _require(isinstance(CAMERA_AUTO_PROBE, bool),

@@ -1,9 +1,12 @@
 """SQLite persistence for assistant interactions."""
 
 import logging
+import os
+from pathlib import Path
 import sqlite3
 
-DB_NAME = "assistant.db"
+_DEFAULT_DB_PATH = Path(__file__).resolve().parents[2] / "assistant.db"
+DB_NAME = os.getenv("VISIONAID_DB_PATH", str(_DEFAULT_DB_PATH))
 logger = logging.getLogger(__name__)
 
 def init_db():

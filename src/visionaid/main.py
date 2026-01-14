@@ -4,7 +4,7 @@ import logging
 
 from .config import validate_config
 from .logging_utils import configure_logging
-from .realtime_client import run_realtime
+from .pipeline import run_pipeline
 from .tool_access import check_camera_access, check_microphone_access
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def main():
         logger.warning("microphone_not_ready")
     if not cam_ok:
         logger.warning("camera_not_ready")
-    run_realtime()
+    run_pipeline()
 
 
 if __name__ == "__main__":
