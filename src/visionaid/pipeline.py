@@ -17,6 +17,7 @@ from .config import (
 )
 from .db import init_db, log_interaction
 from .memory import build_memory_entry, load_memory, search_memory, store_memory
+from .stt_whisper import transcribe_audio
 from .tool_access import check_camera_access, check_microphone_access
 from .tts import speak
 from .vision import analyze_image, capture_image
@@ -77,8 +78,6 @@ def run_pipeline():
             wav_bytes = record_utterance_wav_bytes()
             if not wav_bytes:
                 continue
-
-            from .stt_whisper import transcribe_audio
 
             user_text = transcribe_audio(wav_bytes)
             if not user_text:

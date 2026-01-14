@@ -3,7 +3,6 @@
 import glob
 import os
 import stat
-import time
 
 import sounddevice as sd
 
@@ -91,11 +90,3 @@ def check_camera_access():
     if used_index != CAMERA_INDEX:
         return True, f"Camera access OK (auto-probed index {used_index})."
     return True, "Camera access OK."
-
-
-def should_recheck(last_checked_at, interval_seconds):
-    if interval_seconds <= 0:
-        return False
-    if last_checked_at is None:
-        return True
-    return (time.time() - last_checked_at) >= interval_seconds

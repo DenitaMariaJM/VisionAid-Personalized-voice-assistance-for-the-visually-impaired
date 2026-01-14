@@ -203,32 +203,3 @@ def analyze_image(image_path, prompt):
         logger.warning("vision_analysis_failed error=%s", exc)
         return ""
 
-
-def image_path_to_data_url(image_path: str) -> str:
-    """Convert an image file to a resized/encoded data URL for realtime vision input."""
-    if not image_path:
-        return ""
-    try:
-        if not os.path.exists(image_path):
-            return ""
-        image = cv2.imread(image_path)
-        if image is None:
-            return ""
-        height, width = image.shape[:2]
-        max_dim = max(height, width)
-        if max_dim > VISION_MAX_DIM:
-            scale = VISION_MAX_DIM / float(max_dim)
-            new_size = (int(width * scale), int(height * scale))
-            image = cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
-        success, encoded = cv2.imencode(
-            ".jpg",
-            image,
-            [int(cv2.IMWRITE_JPEG_QUALITY), VISION_JPEG_QUALITY],
-        )
-        if not success:
-            return ""
-        b64_data = base64.b64encode(encoded.tobytes()).decode("utf-8")
-        return f"data:image/jpeg;base64,{b64_data}"
-    except Exception as exc:
-        logger.warning("vision_encode_failed error=%s", exc)
-        return ""

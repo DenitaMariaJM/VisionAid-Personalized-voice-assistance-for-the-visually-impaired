@@ -35,6 +35,55 @@ Unlike generic voice assistants, VisionAid prioritizes:
 
 ---
 
+##  Models Used
+
+Configured in `src/visionaid/config.py`:
+
+Current defaults:
+
+- `STT_MODEL = "gpt-4o-mini-transcribe"`: speech-to-text transcription (`src/visionaid/stt_whisper.py`)
+- `AGENT_MODEL = "gpt-4o-mini"`: action planning agent (`src/visionaid/agent.py`)
+- `VISION_MODEL = "gpt-4o-mini"`: image understanding (`src/visionaid/vision.py`)
+- `ASSISTANT_MODEL = "gpt-4o-mini"`: final response model (`src/visionaid/pipeline.py`)
+- `TTS_MODEL = "gpt-4o-mini-tts"`: text-to-speech (`src/visionaid/tts.py`)
+- Embeddings (semantic memory) uses `model="text-embedding-3-small"` (`src/visionaid/memory.py`)
+
+You can change these in `src/visionaid/config.py`.
+
+---
+
+##  Current Code Flow
+
+Single turn (one user utterance):
+
+1. `audio_io.record_utterance_wav_bytes()` records one utterance (simple VAD).
+2. `stt_whisper.transcribe_audio()` turns WAV bytes into `user_text`.
+3. `agent.plan_actions()` returns an `ActionPlan` (`vision` / `memory` / `both` / `chat`).
+4. If `vision`/`both`:
+   - `vision.capture_image()` saves a timestamped JPEG into `captured_images/`.
+   - `vision.analyze_image()` produces a short textual description/answer.
+5. If `memory`/`both`:
+   - `memory.search_memory()` retrieves relevant snippets (FAISS + embeddings).
+6. If pure `vision`, VisionAid returns the vision analysis directly to minimize tokens.
+   Otherwise `pipeline._final_response()` calls the final model using the available context.
+7. `tts.speak()` plays the final text response aloud (if `TTS_ENABLED=True`).
+8. `db.log_interaction()` persists query/response/image_path to SQLite, and memory may be stored depending on `MEMORY_STORE_EVERY_TURN`.
+
+---
+
+##  Key Modules / Functions
+
+- Audio capture: `src/visionaid/audio_io.py` (`record_utterance_wav_bytes`)
+- Speech-to-text: `src/visionaid/stt_whisper.py` (`transcribe_audio`)
+- Action planning: `src/visionaid/agent.py` (`plan_actions`, `ActionPlan`)
+- Vision: `src/visionaid/vision.py` (`capture_image`, `analyze_image`)
+- Memory: `src/visionaid/memory.py` (`search_memory`, `store_memory`, `load_memory`)
+- Orchestration: `src/visionaid/pipeline.py` (`run_pipeline`)
+- Text-to-speech: `src/visionaid/tts.py` (`speak`)
+- Persistence: `src/visionaid/db.py` (`init_db`, `log_interaction`)
+
+---
+
 ##  Key Features
 
 ###  Voice Interaction
@@ -47,14 +96,12 @@ Unlike generic voice assistants, VisionAid prioritizes:
 - Memory search/store via an action-planning agent
 
 ###  Vision-Based Assistance
-- Real-time camera image capture
-- Multimodal AI (text + image)
-- Focus on obstacles and navigation
+- Camera image capture (saved to `captured_images/`)
+- Image understanding to answer general visual questions (not only obstacles)
 
 ###  Accessibility-Focused Responses
-- Short, clear, and action-oriented
-- Direction-aware (front / left / right)
-- Safety-first language
+- Concise, practical voice responses
+- Safety-first guidance when navigation-related
 
 ###  Contextual Memory
 - Semantic memory using embeddings with SQLite persistence
@@ -86,8 +133,6 @@ src/visionaid/
   vision.py
   memory.py
   db.py
-  utils/
-    language_guard.py
 permissions.py
 ```
 
@@ -100,9 +145,10 @@ python main.py
 ##  Configuration Notes
 
 - `OPENAI_API_KEY` must be set in your environment.
-- Realtime transcription model and fallback settings live in
-  `src/visionaid/config.py` (STT + VAD + models).
+- Core settings live in `src/visionaid/config.py` (STT, VAD, models, token limits, TTS).
 - Memory persistence can be toggled with `MEMORY_PERSIST`.
+- To reduce token/latency, memory embeddings are not stored every turn by default; enable with `MEMORY_STORE_EVERY_TURN = True`.
+- Captured image directory can be overridden with `VISIONAID_IMAGE_DIR=/path`.
 
 ##  Setup Notes
 
