@@ -12,7 +12,6 @@ from openai import OpenAI
 import threading
 import asyncio
 from queue import Queue
-import websocket
 from tts_server_internal import start_tts_server
 import io
 import wave
@@ -281,9 +280,6 @@ def get_unsummarized_dates():
 
     # 🔹 Exclude today
     interaction_dates.discard(today)
-
-    return interaction_dates - summarized_dates
-
 
     return interaction_dates - summarized_dates
 def run_pending_summaries():
