@@ -3,10 +3,22 @@ import cv2
 import time
 import base64
 import sqlite3
-import pyttsx3
+import websocket
+import json
+import pyaudio
 import speech_recognition as sr
 from datetime import datetime
 from openai import OpenAI
+import threading
+import asyncio
+from queue import Queue
+import websocket
+from tts_server_internal import start_tts_server
+import io
+import wave
+
+audio_lock = threading.Lock()
+
 
 # -----------------------------
 # CONFIG
@@ -19,19 +31,129 @@ WAKE_WORD = "alexa"
 CAMERA_INDEX = 0
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+is_speaking = False
 
 # -----------------------------
 # SETUP
 # -----------------------------
+class TTSClient:
+    def __init__(self, url):
+        print("DEBUG: Initializing persistent TTS client")
+        self.url = url
+        self.ws = websocket.create_connection(self.url)
+        self.ws.settimeout(30)
+
+        self.audio = pyaudio.PyAudio()
+
+    def speak(self, text):
+        if not text.strip():
+            return
+
+        print("TTS:", text)
+
+        try:
+            self.ws.send(json.dumps({
+                "text": text,
+                "voice": "neutral",
+                "rate": 1.0
+            }))
+
+            audio_data = b""
+
+            while True:
+                data = self.ws.recv()
+
+                if isinstance(data, str) and data == "END":
+                    break
+
+                if isinstance(data, bytes):
+                    audio_data += data
+
+            if not audio_data:
+                print("⚠️ No audio received")
+                return
+
+            # ✅ Thread-safe WAV playback
+            with audio_lock:
+                with wave.open(io.BytesIO(audio_data), "rb") as wf:
+                    stream = self.audio.open(
+                        format=self.audio.get_format_from_width(wf.getsampwidth()),
+                        channels=wf.getnchannels(),
+                        rate=wf.getframerate(),
+                        output=True
+                    )
+
+                    stream.write(wf.readframes(wf.getnframes()))
+                    stream.stop_stream()
+                    stream.close()
+
+        except Exception as e:
+            print("TTS error:", e)
+            try:
+                self.ws.close()
+            except:
+                pass
+
+            print("🔁 Reconnecting TTS WebSocket...")
+            self.ws = websocket.create_connection(self.url)
+            self.ws.settimeout(30)
+
+    def close(self):
+        try:
+            self.ws.close()
+        except:
+            pass
+
+        try:
+            self.audio.terminate()
+        except:
+            pass
+
+
+tts_queue = Queue()
+tts_client = None
+
+def tts_worker():
+    global tts_client, is_speaking
+
+    while True:
+        text = tts_queue.get()
+
+        if text is None:
+            break
+
+        try:
+            is_speaking = True
+            tts_client.speak(text)
+
+        except Exception as e:
+            print("🔴 TTS worker error:", e)
+
+            # Attempt clean recovery
+            try:
+                tts_client.close()
+            except:
+                pass
+
+            time.sleep(0.5)
+
+            try:
+                print("🔁 Reinitializing TTS client...")
+                tts_client = TTSClient(TTS_WS_URL)
+                tts_client.speak(text)
+            except Exception as e:
+                print("❌ TTS recovery failed:", e)
+
+        finally:
+            is_speaking = False
+
+
+
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 
-# Initialize TTS engine
-tts = pyttsx3.init()
-tts.setProperty("rate", 170)
+TTS_WS_URL = "ws://localhost:8765"  # your TTS server
 
-def speak(text):
-    tts.say(text)
-    tts.runAndWait()
+
 
 # -----------------------------
 # DATABASE SETUP
@@ -212,29 +334,46 @@ def img_to_data_uri(path):
 # SPEECH RECOGNITION
 # -----------------------------
 def listen_for_wake_word():
+    global is_speaking
+
     r = sr.Recognizer()
     mic = sr.Microphone()
 
-    print("Listening for wake word 'Alexa'...")
+    print("🎤 Listening for wake word 'Alexa'...")
 
     with mic as source:
         r.adjust_for_ambient_noise(source, duration=0.4)
 
         while True:
-            audio = r.listen(source, phrase_time_limit=4)
+
+            # 🔇 Do NOT listen while speaking
+            if is_speaking:
+                time.sleep(0.2)
+                continue
 
             try:
+                audio = r.listen(
+                    source,
+                    timeout=5,
+                    phrase_time_limit=4
+                )
+
                 text = r.recognize_google(audio).lower()
                 print("Heard:", text)
+
                 if text.startswith(WAKE_WORD):
-                    remaining = text[len(WAKE_WORD):].strip()
-                    if remaining:
-                        return remaining
-                    else:
-                        speak("Yes, what can I help you with?")
-                        return listen_for_command()
-            except:
-                pass
+                    return text[len(WAKE_WORD):].strip()
+
+            except sr.WaitTimeoutError:
+                print("⏳ No speech detected")
+
+            except sr.UnknownValueError:
+                print("❓ Could not understand audio")
+
+            except Exception as e:
+                print("🎤 Mic error:", e)
+
+
 
 def listen_for_command():
     r = sr.Recognizer()
@@ -367,31 +506,57 @@ Respond as if speaking directly to the user.
 # MAIN LOOP
 # -----------------------------
 def main():
+    global tts_client
+
+    # Start TTS server
+    threading.Thread(
+        target=start_tts_server,
+        daemon=True
+    ).start()
+
+    time.sleep(1)
+
+    # Create persistent TTS client
+    tts_client = TTSClient(TTS_WS_URL)
+
+    # Start TTS worker thread
+    threading.Thread(
+        target=tts_worker,
+        daemon=True
+    ).start()
+
+
+    print("DEBUG: Entered main()")
     init_db()
     init_daily_summary_db()
 
-    # Generate summaries for past unsummarized days
     run_pending_summaries()
 
-    speak("System is ready.")
+    print("DEBUG: About to speak system ready")
+    tts_queue.put("System is ready.")
+
 
     while True:
         try:
-            # 1. Listen for user
             query = listen_for_wake_word()
-            print("User:", query)
 
             if not query.strip():
-                speak("I didn't catch that. Please ask your question after saying Alexa.")
+                tts_queue.put("Yes, what can I help you with?")
+                query = listen_for_command()
+
+            if not query.strip():
+                tts_queue.put("I did not hear a command.")
                 continue
 
             # 2. Capture image
-            speak("Capturing image...")
+            tts_queue.put("Capturing image...")
+
+
             image_path = capture_and_compress()
             image_uri = img_to_data_uri(image_path)
 
             # 3. Analyze current scene
-            speak("Analyzing, please wait...")
+            tts_queue.put("Analyzing, please wait...")
             result = analyze_image_and_query(image_uri, query)
             print("GPT Scene Analysis:\n", result)
 
@@ -424,15 +589,17 @@ def main():
             time.sleep(0.5)
 
             # 9. Speak final response
-            speak(final_response)
+            tts_queue.put(final_response)
+
 
         except KeyboardInterrupt:
             print("Exiting.")
             break
 
         except Exception as e:
-            print("Error:", e)
-            speak("I faced an error, but I am still running.")
+            print("ERROR:", e)
+            tts_queue.put("I faced an error, but I am still running.")
+
 
 if __name__ == "__main__":
     main()
