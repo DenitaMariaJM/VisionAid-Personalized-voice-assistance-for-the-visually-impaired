@@ -116,7 +116,7 @@ def store_memory(text):
             conn = sqlite3.connect(DB_NAME)
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO memory (text, embedding) VALUES (?, ?)",
+                "INSERT INTO semantic_memory (text, embedding) VALUES (?, ?)",
                 (trimmed, vector.tobytes()),
             )
             conn.commit()
@@ -168,7 +168,7 @@ def load_memory():
     try:
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
-        cur.execute("SELECT text, embedding FROM memory ORDER BY id ASC")
+        cur.execute("SELECT text, embedding FROM semantic_memory ORDER BY id ASC")
         rows = cur.fetchall()
         conn.close()
     except Exception:
@@ -200,7 +200,7 @@ def clear_memory():
         try:
             conn = sqlite3.connect(DB_NAME)
             cur = conn.cursor()
-            cur.execute("DELETE FROM memory")
+            cur.execute("DELETE FROM semantic_memory")
             conn.commit()
             conn.close()
         except Exception:

@@ -72,13 +72,52 @@ def _fallback_plan(user_text: str) -> ActionPlan:
         return ActionPlan(intent="memory", memory_query=user_text)
     return ActionPlan(intent="chat")
 
-
 def plan_actions(user_text: str) -> ActionPlan:
+    """
+    Context-aware, low-latency action planner.
+    """
+
     if not user_text:
         return ActionPlan(intent="chat")
+
+    lowered = user_text.lower()
+
+    # 1. FAST HEURISTIC
     heuristic = _fallback_plan(user_text)
-    if heuristic.intent != "chat" and AGENT_LLM_FALLBACK_ONLY:
+
+    # 2. FOLLOW-UP / CONTINUATION
+    followup_tokens = ("it", "this", "that", "there", "again", "same")
+    is_followup = (
+        len(lowered.split()) <= 6
+        and any(t in lowered.split() for t in followup_tokens)
+    )
+
+    if heuristic.intent == "chat" and is_followup:
+        last_intent = get_last_intent_from_logs()
+        if last_intent in ("vision", "memory", "both"):
+            return ActionPlan(
+                intent=last_intent,
+                vision_prompt=user_text if last_intent in ("vision", "both") else None,
+                memory_query=user_text if last_intent in ("memory", "both") else None,
+            )
+
+    # 3. EPISODIC MEMORY (PREVIOUS DAYS)
+    episodic_triggers = (
+        "yesterday", "earlier", "last time", "before", "previously"
+    )
+
+    if heuristic.intent == "chat" and any(t in lowered for t in episodic_triggers):
+        if episodic_memory_exists():
+            return ActionPlan(intent="memory", memory_query=user_text)
+
+    # 4. CONFIDENT HEURISTIC
+    if heuristic.intent in ("vision", "memory", "both"):
         return heuristic
+
+    # 5. OPTIONAL LLM FALLBACK
+    if AGENT_LLM_FALLBACK_ONLY:
+        return heuristic
+
     try:
         resp = client.chat.completions.create(
             model=AGENT_MODEL,
@@ -90,18 +129,58 @@ def plan_actions(user_text: str) -> ActionPlan:
             temperature=0,
             max_tokens=AGENT_MAX_TOKENS,
         )
-        content = (resp.choices[0].message.content or "").strip()
-        data = json.loads(content)
-        intent = str(data.get("intent", "")).strip().lower()
+
+        data = json.loads(resp.choices[0].message.content or "{}")
+        intent = data.get("intent", "chat")
+
         if intent not in ("vision", "memory", "both", "chat"):
-            raise ValueError("bad intent")
-        vision_prompt = data.get("vision_prompt")
-        memory_query = data.get("memory_query")
+            intent = "chat"
+
         return ActionPlan(
             intent=intent,
-            vision_prompt=(vision_prompt or None),
-            memory_query=(memory_query or None),
+            vision_prompt=user_text if intent in ("vision", "both") else None,
+            memory_query=user_text if intent in ("memory", "both") else None,
         )
+
     except Exception as exc:
         logger.warning("action_planning_failed error=%s", exc)
         return heuristic
+    
+def get_last_intent_from_logs() -> Optional[str]:
+    """
+    Fetch the last action intent from interaction logs.
+    Metadata-only, very fast.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("""
+        SELECT intent
+        FROM interactions
+        WHERE intent IS NOT NULL
+        ORDER BY timestamp DESC
+        LIMIT 1
+    """)
+
+    row = c.fetchone()
+    conn.close()
+
+    return row[0] if row else None
+
+def episodic_memory_exists() -> bool:
+    """
+    Check if episodic memory has at least one stored day.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+
+    c.execute("SELECT 1 FROM episodic_memory LIMIT 1")
+    exists = c.fetchone() is not None
+
+    conn.close()
+    return exists
+

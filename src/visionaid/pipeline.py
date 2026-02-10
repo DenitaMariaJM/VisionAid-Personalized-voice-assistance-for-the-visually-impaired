@@ -61,8 +61,7 @@ def _final_response(user_text: str, vision_analysis: str, memories: list[str]) -
 
 def run_pipeline():
     validate_config()
-    init_db()
-    load_memory()
+   
 
     mic_ok, mic_msg = check_microphone_access()
     cam_ok, cam_msg = check_camera_access()
@@ -127,6 +126,12 @@ def run_pipeline():
                         should_store = True
                     if should_store:
                         store_memory(build_memory_entry(user_text, assistant_text))
-                log_interaction(user_text, assistant_text, image_path=image_path)
+                log_interaction(
+                    user_text,
+                    assistant_text,
+                    intent=plan.intent,
+                    image_path=image_path
+                )
+
     except KeyboardInterrupt:
         logger.info("shutdown")
