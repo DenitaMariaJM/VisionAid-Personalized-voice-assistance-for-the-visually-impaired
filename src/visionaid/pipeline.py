@@ -21,6 +21,8 @@ from .stt_whisper import transcribe_audio
 from .tool_access import check_camera_access, check_microphone_access
 from .tts import speak
 from .vision import analyze_image, capture_image
+from .agent import plan_actions, classify_memory_type
+from .episodic_retrieval import search_episodic_memory
 
 logger = logging.getLogger(__name__)
 client = OpenAI()
@@ -104,8 +106,16 @@ def run_pipeline():
                             logger.warning("vision_analysis_empty image_path=%s", image_path)
 
             memories: list[str] = []
+
             if MEMORY_ENABLED and plan.intent in ("memory", "both"):
-                memories = search_memory(plan.memory_query or user_text, k=MEMORY_TOP_K)
+                memory_query = plan.memory_query or user_text
+                memory_type = classify_memory_type(memory_query)
+
+                if memory_type == "episodic":
+                    memories = search_episodic_memory(memory_query, k=1)
+                else:
+                    memories = search_memory(memory_query, k=MEMORY_TOP_K)
+
 
             # Token/perf: if the vision model already answered the question and
             # no memory context is needed, use it directly.

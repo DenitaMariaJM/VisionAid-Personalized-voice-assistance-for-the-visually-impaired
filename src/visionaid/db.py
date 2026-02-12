@@ -26,13 +26,15 @@ def init_db():
 
     # Interactions
     c.execute("""
-    CREATE TABLE IF NOT EXISTS interactions (
+        CREATE TABLE IF NOT EXISTS interactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         query TEXT,
         response TEXT,
+        intent TEXT,
         image_path TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
     )
+
     """)
 
     # Semantic memory

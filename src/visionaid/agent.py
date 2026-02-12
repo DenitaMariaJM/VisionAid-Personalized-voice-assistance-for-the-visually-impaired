@@ -6,6 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from .db import DB_NAME
 
 from openai import OpenAI
 
@@ -183,4 +184,29 @@ def episodic_memory_exists() -> bool:
 
     conn.close()
     return exists
+def classify_memory_type(query: str) -> str:
+    """
+    Decide whether the query requires episodic or semantic memory.
+    """
+    lowered = query.lower()
+
+    episodic_keywords = (
+        "yesterday", "earlier", "last time", "before",
+        "previously", "place", "room", "around me",
+        "environment", "location", "scene"
+    )
+
+    semantic_keywords = (
+        "what did i say", "what did i ask",
+        "did i tell you", "remember that i",
+        "my name", "preference", "allergic"
+    )
+
+    if any(k in lowered for k in episodic_keywords):
+        return "episodic"
+
+    if any(k in lowered for k in semantic_keywords):
+        return "semantic"
+
+    return "episodic"  # safe default for your project
 
