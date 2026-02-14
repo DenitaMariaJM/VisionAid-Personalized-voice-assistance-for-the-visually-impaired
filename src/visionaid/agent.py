@@ -41,6 +41,15 @@ def _fallback_plan(user_text: str) -> ActionPlan:
     lowered = (user_text or "").lower()
     vision_triggers = (
         "in front",
+        "where am i",
+        "what am i seeing",
+        "what do i see",
+        "what can you see",
+        "what do you see",
+        "describe what you see",
+        "describe my surroundings",
+        "what's around me",
+        "what is around me",
         "ahead",
         "around",
         "surround",
@@ -59,6 +68,10 @@ def _fallback_plan(user_text: str) -> ActionPlan:
         "outfit",
         "shirt",
         "camera",
+        "capture",
+        "take a picture",
+        "take photo",
+        "snap",
         "see",
         "look",
     )
@@ -161,7 +174,7 @@ def get_last_intent_from_logs() -> Optional[str]:
         SELECT intent
         FROM interactions
         WHERE intent IS NOT NULL
-        ORDER BY timestamp DESC
+        ORDER BY timestamp DESC, id DESC
         LIMIT 1
     """)
 
@@ -208,5 +221,5 @@ def classify_memory_type(query: str) -> str:
     if any(k in lowered for k in semantic_keywords):
         return "semantic"
 
-    return "episodic"  # safe default for your project
-
+    # Default to semantic so general "remember/recall" queries are query-based.
+    return "semantic"

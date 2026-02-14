@@ -9,13 +9,11 @@ This module:
 
 import sqlite3
 import logging
-from datetime import datetime, date
 
 from openai import OpenAI
-import numpy as np
 
 from .db import DB_NAME
-from .config import MEMORY_SNIPPET_CHARS
+from .config import EPISODIC_SUMMARY_MAX_CHARS
 from .memory import get_embedding  # reuse your existing embedding logic
 
 logger = logging.getLogger(__name__)
@@ -73,10 +71,25 @@ def _filter_interactions(rows):
     Episodic memory must be over-inclusive.
     """
     filtered = []
+    visual_query_keywords = (
+        "left", "right", "front", "ahead", "obstacle", "stairs", "door",
+        "path", "around", "room", "where am i", "what do you see", "describe",
+    )
+    hazard_response_keywords = (
+        "stairs", "step", "obstacle", "blocked", "hazard", "edge", "wet",
+        "narrow", "crowded", "traffic", "vehicle", "bike",
+    )
 
     for query, response, image_path in rows:
-        # Keep if an image was captured OR a meaningful description was produced
-        if image_path or (response and len(response.strip()) > 30):
+        q = (query or "").strip().lower()
+        r = (response or "").strip()
+        r_lower = r.lower()
+        has_visual_query = any(token in q for token in visual_query_keywords)
+        has_hazard_signal = any(token in r_lower for token in hazard_response_keywords)
+        has_meaningful_response = len(r) > 20 and ("left" in r_lower or "right" in r_lower or "front" in r_lower)
+
+        # Keep all camera-grounded turns and short hazard/navigation alerts.
+        if image_path or has_visual_query or has_hazard_signal or has_meaningful_response:
             filtered.append((query, response, image_path))
 
     return filtered
@@ -142,7 +155,7 @@ def _summarize_day(day, interactions):
     )
 
     summary = response.choices[0].message.content.strip()
-    return summary[:MEMORY_SNIPPET_CHARS]
+    return summary[:EPISODIC_SUMMARY_MAX_CHARS]
 
 
 
@@ -152,6 +165,8 @@ def _summarize_day(day, interactions):
 
 def _store_episode(day, summary):
     embedding = get_embedding(summary)
+    if embedding is None:
+        return False
 
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
@@ -167,6 +182,7 @@ def _store_episode(day, summary):
 
     conn.commit()
     conn.close()
+    return True
 
 
 # ---------------------------------------------------------
@@ -182,17 +198,22 @@ def summarize_pending_days():
         return
 
     for day in days:
-        rows = _get_interactions_for_day(day)
-        logger.info("episodic_summary: %s raw rows = %d", day, len(rows))
+        try:
+            rows = _get_interactions_for_day(day)
+            logger.info("episodic_summary: %s raw rows = %d", day, len(rows))
 
-        filtered = _filter_interactions(rows)
-        logger.info("episodic_summary: %s filtered rows = %d", day, len(filtered))
+            filtered = _filter_interactions(rows)
+            logger.info("episodic_summary: %s filtered rows = %d", day, len(filtered))
 
-        summary = _summarize_day(day, filtered)
-        if not summary:
-            logger.error("episodic_summary: %s FAILED to summarize", day)
-            continue
+            summary = _summarize_day(day, filtered)
+            if not summary:
+                logger.error("episodic_summary: %s FAILED to summarize", day)
+                continue
 
-        _store_episode(day, summary)
-        logger.info("episodic_summary: STORED summary for %s", day)
-
+            stored = _store_episode(day, summary)
+            if stored:
+                logger.info("episodic_summary: STORED summary for %s", day)
+            else:
+                logger.error("episodic_summary: %s FAILED to store embedding", day)
+        except Exception as exc:
+            logger.exception("episodic_summary: %s failed error=%s", day, exc)

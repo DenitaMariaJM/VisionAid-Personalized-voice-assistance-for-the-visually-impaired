@@ -3,6 +3,7 @@
 import sqlite3
 import threading
 import logging
+from datetime import datetime, timezone
 
 import faiss               # Library for fast vector similarity search
 import numpy as np         # Numerical operations for embeddings
@@ -31,6 +32,7 @@ index = faiss.IndexFlatL2(DIM)
 # List to store the original text corresponding to each embedding
 # The index position matches the FAISS vector index
 texts = []
+text_timestamps = []
 _lock = threading.Lock()
 
 
@@ -59,15 +61,27 @@ def get_embedding(text):
 
     trimmed = _trim_text(text, MEMORY_SNIPPET_CHARS)
 
-    # Call OpenAI embeddings API
-    emb = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=trimmed
-    )
+    try:
+        # Call OpenAI embeddings API
+        emb = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=trimmed
+        )
+        # Convert embedding to NumPy float32 array
+        # FAISS requires float32 vectors
+        return np.array(emb.data[0].embedding).astype("float32")
+    except Exception as exc:
+        logger.warning("embedding_failed error=%s", exc)
+        return None
 
-    # Convert embedding to NumPy float32 array
-    # FAISS requires float32 vectors
-    return np.array(emb.data[0].embedding).astype("float32")
+
+def _utc_now_text():
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _format_semantic_entry(text, created_at):
+    stamp = created_at or "unknown-time"
+    return f"[semantic @ {stamp}] {text}"
 
 
 # ==============================
@@ -103,21 +117,25 @@ def store_memory(text):
 
     # Generate embedding for the text
     vector = get_embedding(trimmed)
+    if vector is None:
+        return
 
     # Add the vector to the FAISS index
     # Reshape is required: (1, DIM)
+    created_at = _utc_now_text()
     with _lock:
         index.add(vector.reshape(1, -1))
         # Store the original text
         texts.append(trimmed)
+        text_timestamps.append(created_at)
 
     if MEMORY_PERSIST:
         try:
             conn = sqlite3.connect(DB_NAME)
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO semantic_memory (text, embedding) VALUES (?, ?)",
-                (trimmed, vector.tobytes()),
+                "INSERT INTO semantic_memory (text, embedding, created_at) VALUES (?, ?, ?)",
+                (trimmed, vector.tobytes(), created_at),
             )
             conn.commit()
             conn.close()
@@ -153,13 +171,20 @@ def search_memory(query, k=2):
 
     # Convert query into embedding
     q_vec = get_embedding(query)
+    if q_vec is None:
+        return []
 
     # Perform similarity search in FAISS index
     # Returns distances and indices
     with _lock:
         _, indices = index.search(q_vec.reshape(1, -1), k)
         # Retrieve corresponding texts using indices
-        return [texts[i] for i in indices[0] if 0 <= i < len(texts)]
+        results = []
+        for i in indices[0]:
+            if 0 <= i < len(texts):
+                created_at = text_timestamps[i] if i < len(text_timestamps) else None
+                results.append(_format_semantic_entry(texts[i], created_at))
+        return results
 
 
 def load_memory():
@@ -168,7 +193,7 @@ def load_memory():
     try:
         conn = sqlite3.connect(DB_NAME)
         cur = conn.cursor()
-        cur.execute("SELECT text, embedding FROM semantic_memory ORDER BY id ASC")
+        cur.execute("SELECT text, embedding, created_at FROM semantic_memory ORDER BY id ASC")
         rows = cur.fetchall()
         conn.close()
     except Exception:
@@ -181,7 +206,8 @@ def load_memory():
     with _lock:
         index.reset()
         texts.clear()
-        for text, blob in rows:
+        text_timestamps.clear()
+        for text, blob, created_at in rows:
             if not blob:
                 continue
             vec = np.frombuffer(blob, dtype="float32")
@@ -189,12 +215,14 @@ def load_memory():
                 continue
             index.add(vec.reshape(1, -1))
             texts.append(text)
+            text_timestamps.append(created_at)
 
 
 def clear_memory():
     with _lock:
         index.reset()
         texts.clear()
+        text_timestamps.clear()
 
     if MEMORY_PERSIST:
         try:
@@ -211,4 +239,5 @@ def list_memory(limit=3):
     if limit <= 0:
         return []
     with _lock:
-        return texts[-limit:]
+        pairs = list(zip(texts, text_timestamps))
+        return [_format_semantic_entry(text, created_at) for text, created_at in pairs[-limit:]]

@@ -12,6 +12,9 @@ from .pipeline import run_pipeline
 from .db import init_db
 from .memory import load_memory
 from .episodic_summary import summarize_pending_days
+import logging
+
+logger = logging.getLogger(__name__)
 
 def main():
     configure_logging()
@@ -22,8 +25,11 @@ def main():
     # 2️⃣ Load semantic memory
     load_memory()
 
-    # 3️⃣ 🔴 RUN EPISODIC SUMMARY HERE
-    summarize_pending_days()
+    # 3️⃣ Run episodic summarization, but never block startup on failure.
+    try:
+        summarize_pending_days()
+    except Exception as exc:
+        logger.exception("episodic_summary_failed error=%s", exc)
 
     # 4️⃣ Start live assistant (blocking)
     run_pipeline()

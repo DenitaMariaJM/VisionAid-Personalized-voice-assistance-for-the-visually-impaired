@@ -8,9 +8,10 @@ STT_MODEL = "gpt-4o-mini-transcribe"
 MEMORY_ENABLED = True
 MEMORY_PERSIST = True
 MEMORY_SNIPPET_CHARS = 240
+EPISODIC_SUMMARY_MAX_CHARS = 1200
 VISION_MAX_TOKENS = 60
-MEMORY_STORE_ASSISTANT = False
-MEMORY_STORE_EVERY_TURN = False
+MEMORY_STORE_ASSISTANT = True
+MEMORY_STORE_EVERY_TURN = True
 VISION_MAX_DIM = 640
 VISION_JPEG_QUALITY = 70
 CAMERA_INDEX = 0
@@ -85,6 +86,8 @@ def validate_config():
     _require(1 <= VISION_JPEG_QUALITY <= 100,
              "VISION_JPEG_QUALITY must be in [1, 100].")
     _require(MEMORY_SNIPPET_CHARS > 0, "MEMORY_SNIPPET_CHARS must be > 0.")
+    _require(EPISODIC_SUMMARY_MAX_CHARS > 0,
+             "EPISODIC_SUMMARY_MAX_CHARS must be > 0.")
     _require(isinstance(MEMORY_STORE_EVERY_TURN, bool),
              "MEMORY_STORE_EVERY_TURN must be a boolean.")
     _require(isinstance(CAMERA_INDEX, int) and CAMERA_INDEX >= 0,
