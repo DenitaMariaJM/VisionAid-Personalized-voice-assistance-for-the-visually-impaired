@@ -84,6 +84,11 @@ def _format_semantic_entry(text, created_at):
     return f"[semantic @ {stamp}] {text}"
 
 
+def _format_user_fact_entry(text, created_at):
+    stamp = created_at or "unknown-time"
+    return f"[user fact @ {stamp}] {text}"
+
+
 # ==============================
 # MEMORY STORAGE
 # ==============================
@@ -241,3 +246,94 @@ def list_memory(limit=3):
     with _lock:
         pairs = list(zip(texts, text_timestamps))
         return [_format_semantic_entry(text, created_at) for text, created_at in pairs[-limit:]]
+
+
+def store_user_fact(text: str) -> bool:
+    if not text:
+        return False
+
+    trimmed = _trim_text(text, MEMORY_SNIPPET_CHARS)
+    vector = get_embedding(trimmed)
+    if vector is None:
+        return False
+
+    created_at = _utc_now_text()
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT 1 FROM user_facts WHERE LOWER(text) = LOWER(?) LIMIT 1",
+            (trimmed,),
+        )
+        if cur.fetchone():
+            conn.close()
+            return False
+        cur.execute(
+            "INSERT INTO user_facts (text, embedding, created_at) VALUES (?, ?, ?)",
+            (trimmed, vector.tobytes(), created_at),
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        logger.warning("user_fact_store_failed")
+        return False
+
+
+def search_user_facts(query: str, k: int = 2) -> list[str]:
+    if k <= 0:
+        return []
+
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT text, embedding, created_at
+            FROM user_facts
+            ORDER BY id DESC
+            LIMIT 200
+            """
+        )
+        rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        logger.warning("user_fact_search_failed")
+        return []
+
+    if not rows:
+        return []
+
+    query_text = (query or "").strip()
+    if not query_text:
+        return [_format_user_fact_entry(text, created_at) for text, _, created_at in rows[:k]]
+
+    q_vec = get_embedding(query_text)
+    if q_vec is None:
+        return [_format_user_fact_entry(text, created_at) for text, _, created_at in rows[:k]]
+
+    q_norm = float(np.linalg.norm(q_vec))
+    if q_norm == 0:
+        return [_format_user_fact_entry(text, created_at) for text, _, created_at in rows[:k]]
+
+    scored = []
+    for text, blob, created_at in rows:
+        if not text or not blob:
+            continue
+        try:
+            vec = np.frombuffer(blob, dtype="float32")
+            if vec.size != q_vec.size:
+                continue
+            denom = float(np.linalg.norm(vec) * q_norm)
+            if denom == 0:
+                continue
+            similarity = float(np.dot(vec, q_vec) / denom)
+            scored.append((similarity, text, created_at))
+        except Exception:
+            continue
+
+    if not scored:
+        return [_format_user_fact_entry(text, created_at) for text, _, created_at in rows[:k]]
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [_format_user_fact_entry(text, created_at) for _, text, created_at in scored[:k]]

@@ -66,6 +66,10 @@ Voice examples that update profile:
 ### Interaction Log Fallback
 - If episodic and semantic retrieval return nothing, recent `interactions` rows are used as memory context.
 
+### User Facts Memory
+- Stable personal facts from speech (for example name, preferences, allergies) are stored in `user_facts`.
+- Facts are embedding-indexed and retrieved during memory turns to improve personalized recall.
+
 ## Safety Behavior
 - If camera/image analysis fails in a vision-required turn, VisionAid avoids guessing.
 - It returns a safe prompt asking the user to reposition the camera.
@@ -175,7 +179,7 @@ Profile updates:
 - If camera checks pass but no vision response appears, inspect planner intent logs:
 - Look for `action_plan intent=vision` or `both`.
 - If microphone captures are too short/long, tune VAD values in `config.py`.
-- If memory answers seem empty, verify DB rows in `interactions`, `semantic_memory`, and `episodic_memory`.
+- If memory answers seem empty, verify DB rows in `interactions`, `semantic_memory`, `episodic_memory`, and `user_facts`.
 - Set `VISIONAID_LOG_LEVEL=DEBUG` for deeper diagnostics.
 
 ## Current Scope

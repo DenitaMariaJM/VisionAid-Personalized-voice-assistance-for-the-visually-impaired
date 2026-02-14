@@ -76,8 +76,21 @@ def _fallback_plan(user_text: str) -> ActionPlan:
         "look",
     )
     memory_triggers = ("remind", "earlier", "last time", "before", "what did i ask", "memory")
+    location_history_triggers = (
+        "where am i",
+        "where is this",
+        "what place is this",
+        "this place",
+        "this location",
+        "been here before",
+        "have i been here",
+        "visited this place",
+        "visited here",
+    )
     needs_vision = any(t in lowered for t in vision_triggers)
     needs_memory = any(t in lowered for t in memory_triggers)
+    if any(t in lowered for t in location_history_triggers):
+        needs_memory = True
     if needs_vision and needs_memory:
         return ActionPlan(intent="both", vision_prompt=user_text, memory_query=user_text)
     if needs_vision:
@@ -206,7 +219,8 @@ def classify_memory_type(query: str) -> str:
     episodic_keywords = (
         "yesterday", "earlier", "last time", "before",
         "previously", "place", "room", "around me",
-        "environment", "location", "scene"
+        "environment", "location", "scene",
+        "where am i", "where is this", "been here", "visited"
     )
 
     semantic_keywords = (

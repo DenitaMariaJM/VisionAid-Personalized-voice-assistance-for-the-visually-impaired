@@ -16,7 +16,13 @@ from .config import (
     validate_config,
 )
 from .db import get_recent_interactions, get_user_profile, log_interaction, update_user_profile
-from .memory import build_memory_entry, search_memory, store_memory
+from .memory import (
+    build_memory_entry,
+    search_memory,
+    search_user_facts,
+    store_memory,
+    store_user_fact,
+)
 from .stt_whisper import transcribe_audio
 from .tool_access import check_camera_access, check_microphone_access
 from .tts import speak
@@ -43,6 +49,46 @@ _VISION_UNAVAILABLE = (
     "I cannot safely describe your current surroundings because I could not access a usable camera image. "
     "Please adjust the camera position and ask again."
 )
+
+
+def _is_location_history_query(text: str) -> bool:
+    lowered = (text or "").lower()
+    triggers = (
+        "where am i",
+        "where is this",
+        "what place is this",
+        "this place",
+        "this location",
+        "around me",
+        "been here before",
+        "have i been here",
+        "visited this place",
+        "visited here",
+    )
+    return any(token in lowered for token in triggers)
+
+
+def _is_unhelpful_memory_text(text: str) -> bool:
+    lowered = (text or "").lower()
+    blockers = (
+        "i don't have memory of past interactions",
+        "i dont have memory of past interactions",
+        "i do not have memory of past interactions",
+        "i need more context to help you",
+        "could you describe your current location or surroundings",
+    )
+    return any(token in lowered for token in blockers)
+
+
+def _filter_memories(memories: list[str]) -> list[str]:
+    cleaned = []
+    for item in memories:
+        if not item:
+            continue
+        if _is_unhelpful_memory_text(item):
+            continue
+        cleaned.append(item)
+    return cleaned
 
 
 def _profile_system_prompt(profile: dict) -> str:
@@ -111,6 +157,48 @@ def _extract_profile_updates(user_text: str) -> tuple[dict, str | None]:
     return updates, "Profile updated: " + "; ".join(notes) + "."
 
 
+def _extract_user_facts(user_text: str) -> list[str]:
+    if not user_text:
+        return []
+
+    def _clean(value: str) -> str:
+        return (value or "").strip().strip(" .,!?:;\"'")
+
+    facts = []
+    text = user_text.strip()
+
+    patterns = [
+        (r"\bmy name is ([a-zA-Z][a-zA-Z '\-]{0,40})", "User's name is {value}."),
+        (r"\bi am allergic to ([a-zA-Z0-9 ,'\-]{2,80})", "User is allergic to {value}."),
+        (r"\bi prefer ([a-zA-Z0-9 ,'\-]{2,80})", "User prefers {value}."),
+        (r"\bi like ([a-zA-Z0-9 ,'\-]{2,80})", "User likes {value}."),
+        (r"\bi live in ([a-zA-Z0-9 ,'\-]{2,80})", "User lives in {value}."),
+        (r"\bmy favorite ([a-zA-Z]{3,20}) is ([a-zA-Z0-9 ,'\-]{2,80})", "User's favorite {slot} is {value}."),
+    ]
+
+    for pattern, template in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            if "{slot}" in template:
+                slot = _clean(match.group(1)).lower()
+                value = _clean(match.group(2))
+                if slot and value:
+                    facts.append(template.format(slot=slot, value=value))
+            else:
+                value = _clean(match.group(1))
+                if value:
+                    facts.append(template.format(value=value))
+
+    deduped = []
+    seen = set()
+    for fact in facts:
+        key = fact.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(fact)
+    return deduped
+
+
 def _final_response(user_text: str, vision_analysis: str, memories: list[str], profile: dict) -> str:
     parts = []
     if memories:
@@ -146,6 +234,8 @@ def _recent_interaction_memories(limit: int = 5) -> list[str]:
         query = (item.get("query") or "").strip()
         if not response:
             continue
+        if _is_unhelpful_memory_text(response):
+            continue
         stamp = item.get("timestamp") or "unknown-time"
         results.append(f"[interaction {stamp}] User: {query} | Assistant: {response}")
     return results
@@ -175,6 +265,11 @@ def run_pipeline():
             if not user_text:
                 continue
             logger.info("user_text %s", user_text)
+
+            if MEMORY_ENABLED:
+                user_facts = _extract_user_facts(user_text)
+                for fact in user_facts:
+                    store_user_fact(fact)
 
             updates, profile_ack = _extract_profile_updates(user_text)
             if updates or profile_ack:
@@ -214,10 +309,20 @@ def run_pipeline():
 
             memories: list[str] = []
 
-            if MEMORY_ENABLED and plan.intent in ("memory", "both"):
+            should_query_memory = (
+                MEMORY_ENABLED
+                and (
+                    plan.intent in ("memory", "both")
+                    or _is_location_history_query(user_text)
+                    or (plan.intent == "vision" and bool(vision_error))
+                )
+            )
+
+            if should_query_memory:
                 try:
                     memory_query = plan.memory_query or user_text
                     memory_type = classify_memory_type(memory_query)
+                    facts = search_user_facts(memory_query, k=2)
 
                     if memory_type == "episodic":
                         memories = search_episodic_memory(memory_query, k=1)
@@ -226,6 +331,16 @@ def run_pipeline():
                             memories = search_memory(memory_query, k=MEMORY_TOP_K)
                     else:
                         memories = search_memory(memory_query, k=MEMORY_TOP_K)
+
+                    if facts:
+                        memories = facts + memories
+
+                    memories = _filter_memories(memories)
+
+                    if _is_location_history_query(user_text):
+                        recent_location_context = _recent_interaction_memories(limit=8)
+                        if recent_location_context:
+                            memories = recent_location_context + memories
 
                     # Final fallback: raw recent interaction logs.
                     if not memories:
@@ -264,7 +379,10 @@ def run_pipeline():
                         should_store = True
                     if should_store:
                         try:
-                            store_memory(build_memory_entry(user_text, assistant_text))
+                            if _is_unhelpful_memory_text(assistant_text):
+                                store_memory(build_memory_entry(user_text, None))
+                            else:
+                                store_memory(build_memory_entry(user_text, assistant_text))
                         except Exception as exc:
                             logger.warning("memory_store_failed error=%s", exc)
                 log_interaction(
