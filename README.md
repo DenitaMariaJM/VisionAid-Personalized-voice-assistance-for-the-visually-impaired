@@ -1,175 +1,183 @@
-# VisionAid – Personalized Voice Assistance for the Visually Impaired
+# VisionAid - Personalized Voice Assistance for the Visually Impaired
 
-##  Project Description
+## Overview
+VisionAid is a voice-first assistive agent designed for visually impaired users.
+It combines:
+- Microphone input + speech-to-text
+- Camera capture + vision understanding
+- Context memory (semantic + episodic + recent interactions)
+- Spoken responses (text-to-speech)
 
-**VisionAid** is a personalized, voice-enabled assistive system designed to help **visually impaired users** understand and navigate their surroundings safely.  
-The system uses **voice interaction, camera-based scene understanding, AI reasoning, and contextual memory** to provide **short, actionable, and accessibility-focused guidance**.
+The assistant focuses on practical guidance, short responses, and safety-oriented spatial cues.
 
-Unlike generic voice assistants, VisionAid prioritizes:
-- Navigation safety
-- Obstacle awareness
-- Direction-based guidance
-- Minimal and meaningful responses
+## Core Capabilities
+- Understand user speech and route each turn to `vision`, `memory`, `both`, or `chat`.
+- Capture camera images only when needed.
+- Describe surroundings and potential hazards.
+- Remember prior turns and use them in follow-up questions.
+- Personalize behavior using a persistent user profile.
 
----
+## Runtime Flow
+Single turn flow:
+1. Record one utterance from the microphone (`audio_io.record_utterance_wav_bytes`).
+2. Transcribe speech to text (`stt_whisper.transcribe_audio`).
+3. Detect profile updates in user speech (for example: blind/low-vision, concise/step-by-step).
+4. Plan actions (`agent.plan_actions`) as `vision`, `memory`, `both`, or `chat`.
+5. If `vision`/`both`:
+- Capture image (`vision.capture_image`).
+- Analyze image (`vision.analyze_image`).
+6. If `memory`/`both`, retrieval fallback chain is:
+- Episodic memory (`episodic_retrieval.search_episodic_memory`)
+- Semantic memory (`memory.search_memory`)
+- Recent interaction logs (`db.get_recent_interactions`)
+7. Generate final assistant reply (`pipeline._final_response`) with:
+- System behavior instructions
+- Active user profile instructions
+- Retrieved memory and/or vision context
+8. Speak response (`tts.speak`) and store interaction (`db.log_interaction`).
+9. Store semantic memory entry for recall (`memory.store_memory`).
 
-##  Project Objectives
+## Personalization
+VisionAid actively uses `user_profile` in SQLite.
 
-- Help visually impaired users understand **what is in front of them**
-- Provide **clear movement guidance** (front / left / right)
-- Avoid unnecessary visual descriptions (colors, decorations, artwork)
-- Maintain contextual memory for follow-up questions
-- Deliver calm, concise, and assistive voice responses
+Profile fields:
+- `vision_level` (for example: `blind`, `low_vision`)
+- `response_style` (for example: `concise`, `step_by_step`, `detailed`)
+- `language` (currently English output is enforced)
 
----
+Voice examples that update profile:
+- "I am blind"
+- "I have low vision"
+- "Be concise"
+- "Give step by step guidance"
+- "Respond in English"
 
-##  How the System Works
+## Memory Design
+### Semantic Memory
+- Embedding-based recall using FAISS (`text-embedding-3-small`).
+- Stored in `semantic_memory` table with timestamps.
+- Entries can include both user and assistant text.
 
-1. The system captures a single utterance from the microphone.
-2. The utterance is transcribed to text (STT).
-3. An action agent decides whether to use camera and/or memory.
-4. If needed, the client captures an image and runs image understanding.
-5. The final assistant model answers using the user query + vision/memory context.
-6. The response is also spoken aloud (TTS).
-7. The interaction is stored in a local database.
+### Episodic Memory
+- Summarized day-level recall from previous interactions.
+- Stored in `episodic_memory` with summary embeddings.
+- Used for questions like "have I been here before?"
 
----
+### Interaction Log Fallback
+- If episodic and semantic retrieval return nothing, recent `interactions` rows are used as memory context.
 
-##  Models Used
+## Safety Behavior
+- If camera/image analysis fails in a vision-required turn, VisionAid avoids guessing.
+- It returns a safe prompt asking the user to reposition the camera.
 
+## Models and Services
 Configured in `src/visionaid/config.py`:
+- `STT_MODEL = "gpt-4o-mini-transcribe"`
+- `AGENT_MODEL = "gpt-4o-mini"`
+- `VISION_MODEL = "gpt-4o-mini"`
+- `ASSISTANT_MODEL = "gpt-4o-mini"`
+- `TTS_MODEL = "gpt-4o-mini-tts"`
+- Embeddings: `text-embedding-3-small`
 
-Current defaults:
-
-- `STT_MODEL = "gpt-4o-mini-transcribe"`: speech-to-text transcription (`src/visionaid/stt_whisper.py`)
-- `AGENT_MODEL = "gpt-4o-mini"`: action planning agent (`src/visionaid/agent.py`)
-- `VISION_MODEL = "gpt-4o-mini"`: image understanding (`src/visionaid/vision.py`)
-- `ASSISTANT_MODEL = "gpt-4o-mini"`: final response model (`src/visionaid/pipeline.py`)
-- `TTS_MODEL = "gpt-4o-mini-tts"`: text-to-speech (`src/visionaid/tts.py`)
-- Embeddings (semantic memory) uses `model="text-embedding-3-small"` (`src/visionaid/memory.py`)
-
-You can change these in `src/visionaid/config.py`.
-
----
-
-##  Current Code Flow
-
-Single turn (one user utterance):
-
-1. `audio_io.record_utterance_wav_bytes()` records one utterance (simple VAD).
-2. `stt_whisper.transcribe_audio()` turns WAV bytes into `user_text`.
-3. `agent.plan_actions()` returns an `ActionPlan` (`vision` / `memory` / `both` / `chat`).
-4. If `vision`/`both`:
-   - `vision.capture_image()` saves a timestamped JPEG into `captured_images/`.
-   - `vision.analyze_image()` produces a short textual description/answer.
-5. If `memory`/`both`:
-   - `memory.search_memory()` retrieves relevant snippets (FAISS + embeddings).
-6. If pure `vision`, VisionAid returns the vision analysis directly to minimize tokens.
-   Otherwise `pipeline._final_response()` calls the final model using the available context.
-7. `tts.speak()` plays the final text response aloud (if `TTS_ENABLED=True`).
-8. `db.log_interaction()` persists query/response/image_path to SQLite, and memory may be stored depending on `MEMORY_STORE_EVERY_TURN`.
-
----
-
-##  Key Modules / Functions
-
-- Audio capture: `src/visionaid/audio_io.py` (`record_utterance_wav_bytes`)
-- Speech-to-text: `src/visionaid/stt_whisper.py` (`transcribe_audio`)
-- Action planning: `src/visionaid/agent.py` (`plan_actions`, `ActionPlan`)
-- Vision: `src/visionaid/vision.py` (`capture_image`, `analyze_image`)
-- Memory: `src/visionaid/memory.py` (`search_memory`, `store_memory`, `load_memory`)
-- Orchestration: `src/visionaid/pipeline.py` (`run_pipeline`)
-- Text-to-speech: `src/visionaid/tts.py` (`speak`)
-- Persistence: `src/visionaid/db.py` (`init_db`, `log_interaction`)
-
----
-
-##  Key Features
-
-###  Voice Interaction
-- Local microphone capture (simple VAD)
-- Speech-to-text using OpenAI transcription
-- Text-to-speech using OpenAI TTS + local audio playback
-
-###  Tool-Driven Actions
-- Camera capture and vision analysis via an action-planning agent
-- Memory search/store via an action-planning agent
-
-###  Vision-Based Assistance
-- Camera image capture (saved to `captured_images/`)
-- Image understanding to answer general visual questions (not only obstacles)
-
-###  Accessibility-Focused Responses
-- Concise, practical voice responses
-- Safety-first guidance when navigation-related
-
-###  Contextual Memory
-- Semantic memory using embeddings with SQLite persistence
-- Supports follow-up queries (e.g., “And on the left?”)
-
-### Data Storage
-- SQLite database for storing interactions
-- Stores query, response, image reference, and timestamp
-
-### Observability
-- Structured logging (set `VISIONAID_LOG_LEVEL`)
-
----
-
-##  Repo Layout
-
+## Project Structure
 ```
 src/visionaid/
+  __init__.py
   __main__.py
   main.py
   pipeline.py
   agent.py
   audio_io.py
-  tts.py
-  config.py
-  tool_access.py
   stt_whisper.py
-  logging_utils.py
+  tts.py
   vision.py
   memory.py
+  episodic_summary.py
+  episodic_retrieval.py
   db.py
+  tool_access.py
+  config.py
+  logging_utils.py
+main.py
 permissions.py
+requirements.txt
+setup.py
 ```
 
-##  Quick Start
-
-```
-python main.py
-```
-
-##  Configuration Notes
-
-- `OPENAI_API_KEY` must be set in your environment.
-- Core settings live in `src/visionaid/config.py` (STT, VAD, models, token limits, TTS).
-- Memory persistence can be toggled with `MEMORY_PERSIST`.
-- To reduce token/latency, memory embeddings are not stored every turn by default; enable with `MEMORY_STORE_EVERY_TURN = True`.
-- Captured image directory can be overridden with `VISIONAID_IMAGE_DIR=/path`.
-
-##  Setup Notes
-
-- Audio devices: if you get device errors, set `AUDIO_INPUT_DEVICE` and
-  `AUDIO_OUTPUT_DEVICE` in `src/visionaid/config.py` to the correct device
-  indices.
-- Logging verbosity: set `VISIONAID_LOG_LEVEL=DEBUG` for more detail.
-- Linux dependencies: install PortAudio headers before building audio
-  packages.
-
-```
+## Setup
+### 1) System dependencies (Ubuntu/Debian)
+```bash
 sudo apt install -y portaudio19-dev libsndfile1 python3-dev build-essential
 ```
 
-- Camera access: ensure your user has permission to access the camera device
-  (e.g., add to the `video` group on Linux).
-
-##  Permissions Check
-
-You can run a quick hardware access check before launching the app:
-
+### 2) Python environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -U pip
+pip install -r requirements.txt
 ```
+
+### 3) API key
+```bash
+export OPENAI_API_KEY="your_key_here"
+```
+
+### 4) Optional package install
+```bash
+pip install .
+```
+
+## Run
+From repo root:
+```bash
+python main.py
+```
+
+Hardware pre-check:
+```bash
 python permissions.py
 ```
+
+## Configuration Notes
+Key settings in `src/visionaid/config.py`:
+- `MEMORY_ENABLED = True`
+- `MEMORY_PERSIST = True`
+- `MEMORY_STORE_EVERY_TURN = True`
+- `MEMORY_STORE_ASSISTANT = True`
+- `EPISODIC_SUMMARY_MAX_CHARS = 1200`
+- `VISION_MAX_TOKENS = 60`
+- `ASSISTANT_MAX_TOKENS = 120`
+
+Useful environment variables:
+- `OPENAI_API_KEY`
+- `VISIONAID_LOG_LEVEL` (for example `DEBUG`, `INFO`)
+- `VISIONAID_DB_PATH` (custom SQLite path)
+- `VISIONAID_IMAGE_DIR` (custom captured image directory)
+
+## Usage Examples
+Vision queries:
+- "What am I seeing?"
+- "What is in front of me?"
+- "Capture and describe this."
+
+Memory queries:
+- "What did I ask earlier?"
+- "Have I been here before?"
+- "Remind me what you told me about this place."
+
+Profile updates:
+- "I am blind."
+- "Give step by step directions."
+- "Be concise."
+
+## Troubleshooting
+- If camera checks pass but no vision response appears, inspect planner intent logs:
+- Look for `action_plan intent=vision` or `both`.
+- If microphone captures are too short/long, tune VAD values in `config.py`.
+- If memory answers seem empty, verify DB rows in `interactions`, `semantic_memory`, and `episodic_memory`.
+- Set `VISIONAID_LOG_LEVEL=DEBUG` for deeper diagnostics.
+
+## Current Scope
+VisionAid is a strong prototype and Raspberry Pi-friendly architecture for assistive interaction.
+For production-grade deployment, add hardware field testing, stronger safety policy constraints, and automated tests.
