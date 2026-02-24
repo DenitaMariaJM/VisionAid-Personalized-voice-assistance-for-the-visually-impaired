@@ -5,8 +5,14 @@ import os
 from pathlib import Path
 import sqlite3
 
-_DEFAULT_DB_PATH = Path.cwd() / "assistant.db"
-DB_NAME = os.getenv("VISIONAID_DB_PATH", str(_DEFAULT_DB_PATH))
+# Always bind DB to THIS project folder (VisionAid-feature)
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+# db.py -> visionaid -> src -> PROJECT ROOT
+
+DEFAULT_DB_PATH = BASE_DIR / "assistant.db"
+
+DB_NAME = os.getenv("VISIONAID_DB_PATH", str(DEFAULT_DB_PATH))
 logger = logging.getLogger(__name__)
 DEFAULT_USER_ID = 1
 

@@ -1,3 +1,8 @@
+
+import os
+
+# Detect Raspberry Pi automatically
+IS_RASPBERRY_PI = os.path.exists("/sys/firmware/devicetree/base/model")
 """Runtime configuration constants for VisionAid."""
 
 AUDIO_INPUT_DEVICE = None
@@ -14,14 +19,16 @@ MEMORY_STORE_ASSISTANT = True
 MEMORY_STORE_EVERY_TURN = True
 VISION_MAX_DIM = 640
 VISION_JPEG_QUALITY = 70
-CAMERA_INDEX = 0
-CAMERA_AUTO_PROBE = True
-CAMERA_PROBE_MAX = 4
-CAMERA_BACKEND = "v4l2"
-CAMERA_WARMUP_FRAMES = 4
-CAMERA_FRAME_WIDTH = 0
-CAMERA_FRAME_HEIGHT = 0
+# Raspberry Pi CSI camera uses libcamera (rpicam-still)
+CAMERA_INDEX = 0              # not used on Pi, keep for compatibility
+CAMERA_AUTO_PROBE = False     # disable OpenCV probing
+CAMERA_PROBE_MAX = 1          # not used
+CAMERA_BACKEND = None         # IMPORTANT: disable OpenCV backend
+CAMERA_WARMUP_FRAMES = 0      # not used
+CAMERA_FRAME_WIDTH = 0        # handled by rpicam if needed
+CAMERA_FRAME_HEIGHT = 0       # handled by rpicam if needed
 TOOL_ACCESS_RECHECK_SECONDS = 30.0
+USE_LIBCAMERA = IS_RASPBERRY_PI
 
 # Non-realtime pipeline models
 AGENT_MODEL = "gpt-4o-mini"

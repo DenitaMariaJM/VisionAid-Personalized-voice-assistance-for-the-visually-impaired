@@ -7,8 +7,8 @@ from pathlib import Path
 import logging
 import time
 import subprocess
-from .config import USE_LIBCAMERA
-import cv2    # OpenCV library for camera access
+
+import cv2               # OpenCV library for camera access
 from openai import OpenAI
 
 from .config import (
@@ -48,47 +48,98 @@ IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 # ==============================
 # IMAGE CAPTURE FUNCTION
 # ==============================
-def capture_image():
 
+def try_capture_frame(index):
+    backend = None
+    if CAMERA_BACKEND == "v4l2":
+        backend = cv2.CAP_V4L2
+    elif CAMERA_BACKEND == "dshow":
+        backend = cv2.CAP_DSHOW
+    elif CAMERA_BACKEND == "avfoundation":
+        backend = cv2.CAP_AVFOUNDATION
+
+    cam = cv2.VideoCapture(index, backend) if backend is not None else cv2.VideoCapture(index)
+    if not cam.isOpened():
+        cam.release()
+        # Fallback: some systems fail with a forced backend but work with CAP_ANY.
+        if backend is not None:
+            cam = cv2.VideoCapture(index)
+    if not cam.isOpened():
+        cam.release()
+        return None, None
+
+    if CAMERA_FRAME_WIDTH > 0:
+        cam.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_FRAME_WIDTH)
+    if CAMERA_FRAME_HEIGHT > 0:
+        cam.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_FRAME_HEIGHT)
+
+    for _ in range(CAMERA_WARMUP_FRAMES):
+        cam.read()
+        time.sleep(0.02)
+
+    ret, frame = cam.read()
+    cam.release()
+    if not ret:
+        return None, None
+    return index, frame
+
+
+def capture_image():
+    """
+    Captures a single image from the default camera (camera index 0).
+
+    Returns:
+        str: File path of the saved image if capture succeeds
+        None: If the camera fails to capture an image
+    """
+
+    # Open the default camera (0 = built-in webcam / USB camera)
+    used_index, frame = try_capture_frame(CAMERA_INDEX)
+    if frame is None and CAMERA_AUTO_PROBE:
+        for idx in range(CAMERA_PROBE_MAX):
+            if idx == CAMERA_INDEX:
+                continue
+            used_index, frame = try_capture_frame(idx)
+            if frame is not None:
+                break
+
+    if frame is None:
+        logger.warning(
+            "camera_capture_failed index=%s auto_probe=%s",
+            CAMERA_INDEX,
+            CAMERA_AUTO_PROBE,
+        )
+        return None
+
+    # Generate a unique filename using the current date and time (with ms)
+    # to avoid overwriting images captured within the same second.
     now = datetime.now()
     filename = (
         f"img_{now.strftime('%Y%m%d_%H%M%S')}_{int(now.microsecond / 1000):03d}.jpg"
     )
+
+    # Full path where the image will be saved
     path = IMAGE_DIR / filename
 
-    if USE_LIBCAMERA:
-        # Raspberry Pi (CSI camera)
-        try:
-            subprocess.run(
-                ["rpicam-still", "-n", "--timeout", "500", "-o", str(path)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=True,
-            )
-            logger.info("camera_capture_saved path=%s (libcamera)", path)
-            return str(path)
-        except Exception as exc:
-            logger.warning("libcamera_capture_failed error=%s", exc)
-            return None
+    # Save the captured frame as a JPEG image
+    ok = cv2.imwrite(str(path), frame)
+    if not ok:
+        logger.warning(
+            "camera_capture_write_failed path=%s cwd=%s",
+            str(path),
+            os.getcwd(),
+        )
+        return None
+    logger.info("camera_capture_saved path=%s cwd=%s", str(path), os.getcwd())
 
-    else:
-        # Laptop / USB webcam (OpenCV)
-        cam = cv2.VideoCapture(0)
-        if not cam.isOpened():
-            logger.warning("opencv_camera_open_failed")
-            return None
+    # Return the image path so it can be:
+    # - Passed to the LLM
+    # - Stored in the database
+    if used_index is not None and used_index != CAMERA_INDEX:
+        logger.info("camera_auto_probe_used index=%s", used_index)
+    return str(path)
 
-        ret, frame = cam.read()
-        cam.release()
 
-        if not ret:
-            logger.warning("opencv_camera_read_failed")
-            return None
-
-        cv2.imwrite(str(path), frame)
-        logger.info("camera_capture_saved path=%s (opencv)", path)
-        return str(path)
-    
 def analyze_image(image_path, prompt):
     """Analyze an image using a vision-capable model and return text."""
     if not image_path:
@@ -153,3 +204,10 @@ def analyze_image(image_path, prompt):
         logger.warning("vision_analysis_failed error=%s", exc)
         return ""
 
+CAMERA_INDEX = 0
+CAMERA_AUTO_PROBE = True
+CAMERA_PROBE_MAX = 4
+CAMERA_BACKEND = "v4l2"
+CAMERA_WARMUP_FRAMES = 4
+CAMERA_FRAME_WIDTH = 0
+CAMERA_FRAME_HEIGHT = 0
